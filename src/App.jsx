@@ -1,102 +1,207 @@
-import { useState } from "react";
-import "./App.css";
+import { useEffect, useRef, useState } from "react";
 
-function App() {
-  const [imageFile, setImageFile] = useState(null);
-  const [extractedText, setExtractedText] = useState("");
+export default function App() {
+  const [texts, setTexts] = useState([]); // múltiplos cards
+  const [activeIndex, setActiveIndex] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [speaking, setSpeaking] = useState(false);
+  const utteranceRef = useRef(null);
 
-  // Web Speech API
-  const speakText = (text) => {
-    if (!("speechSynthesis" in window)) {
-      alert("Seu navegador não suporta leitura por voz.");
-      return;
+  /* =========================
+     OCR
+  ========================== */
+  async function handleImageUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setLoading(true);
+
+    const formData = new FormData();
+    formData.append("image", file);
+
+    try {
+      const res = await fetch("/.netlify/functions/ocr", {
+        method: "POST",
+        body: formData
+      });
+
+      const data = await res.json();
+
+      if (data.text) {
+        setTexts(prev => [...prev, data.text]);
+        setActiveIndex(texts.length);
+      } else {
+        alert("Não foi possível ler a imagem.");
+      }
+    } catch (err) {
+      alert("Erro ao processar OCR.");
+    } finally {
+      setLoading(false);
     }
+  }
+
+  /* =========================
+     LEITURA
+  ========================== */
+  function startSpeech(index) {
+    stopSpeech();
+
+    const text = texts[index];
+    if (!text) return;
 
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "pt-BR";
     utterance.rate = 1;
     utterance.pitch = 1;
 
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utterance);
-  };
+    utterance.onstart = () => setSpeaking(true);
+    utterance.onend = () => setSpeaking(false);
+    utterance.onerror = () => setSpeaking(false);
 
-  const handleFileChange = (e) => {
-    setImageFile(e.target.files[0]);
-    setExtractedText("");
-    setError("");
-  };
+    utteranceRef.current = utterance;
+    speechSynthesis.speak(utterance);
+    setActiveIndex(index);
+  }
 
-  const handleSubmit = async () => {
-    if (!imageFile) {
-      setError("Nenhuma imagem selecionada.");
-      return;
-    }
+  function pauseSpeech() {
+    speechSynthesis.pause();
+    setSpeaking(false);
+  }
 
-    setLoading(true);
-    setError("");
+  function resumeSpeech() {
+    speechSynthesis.resume();
+    setSpeaking(true);
+  }
 
-    try {
-      // (por enquanto não precisamos converter a imagem)
-      const response = await fetch("/.netlify/functions/ocr", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          image: "placeholder", // backend ignora por enquanto
-        }),
-      });
+  function stopSpeech() {
+    speechSynthesis.cancel();
+    setSpeaking(false);
+  }
 
-      const data = await response.json();
+  useEffect(() => {
+    return () => speechSynthesis.cancel();
+  }, []);
 
-      if (data.success) {
-        setExtractedText(data.text);
-        speakText(data.text);
-      } else {
-        setError("Falha ao processar OCR.");
-      }
-    } catch (err) {
-      console.error(err);
-      setError("Erro ao conectar com o servidor.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  /* =========================
+     UI
+  ========================== */
   return (
-    <div style={{ padding: "20px", maxWidth: "600px", margin: "0 auto" }}>
-      <h1>Heitor Reader</h1>
+    <div style={styles.page}>
+      <div style={styles.card}>
+        <h1 style={styles.title}>Heitor Reader</h1>
 
-      <input type="file" accept="image/*" onChange={handleFileChange} />
+        {/* Upload */}
+        <label style={styles.upload}>
+          📷 Selecionar imagem
+          <input
+            type="file"
+            accept="image/*"
+            onChange={handleImageUpload}
+            hidden
+          />
+        </label>
 
-      <div style={{ marginTop: "10px" }}>
-        <button onClick={handleSubmit} disabled={loading}>
-          {loading ? "Processando OCR…" : "Ler imagem"}
-        </button>
-      </div>
+        {loading && <p style={styles.info}>Processando OCR…</p>}
 
-      {error && (
-        <p style={{ color: "red", marginTop: "10px" }}>
-          {error}
-        </p>
-      )}
+        {/* Cards agrupados */}
+        <div style={styles.list}>
+          {texts.map((text, i) => (
+            <div
+              key={i}
+              style={{
+                ...styles.textCard,
+                borderColor: activeIndex === i ? "#4ade80" : "#333"
+              }}
+            >
+              <div style={styles.cardHeader}>
+                <span>📄 Texto {i + 1}</span>
 
-      {extractedText && (
-        <div style={{ marginTop: "20px" }}>
-          <h3>Texto extraído</h3>
-          <p style={{ whiteSpace: "pre-wrap" }}>{extractedText}</p>
+                <div style={styles.icons}>
+                  {!speaking || activeIndex !== i ? (
+                    <button onClick={() => startSpeech(i)}>▶</button>
+                  ) : (
+                    <button onClick={pauseSpeech}>⏸</button>
+                  )}
+                  <button onClick={resumeSpeech}>⏵</button>
+                  <button onClick={stopSpeech}>⏹</button>
+                </div>
+              </div>
 
-          <button onClick={() => speakText(extractedText)}>
-            🔊 Ouvir novamente
-          </button>
+              <div style={styles.text}>{text}</div>
+            </div>
+          ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }
 
-export default App;
+/* =========================
+   STYLES
+========================= */
+const styles = {
+  page: {
+    minHeight: "100vh",
+    background: "#0f0f0f",
+    color: "#e5e5e5",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontFamily: "system-ui"
+  },
+  card: {
+    width: "100%",
+    maxWidth: 700,
+    background: "#181818",
+    padding: 24,
+    borderRadius: 16,
+    boxShadow: "0 10px 30px rgba(0,0,0,.6)"
+  },
+  title: {
+    textAlign: "center",
+    marginBottom: 16
+  },
+  upload: {
+    display: "block",
+    textAlign: "center",
+    padding: 12,
+    background: "#2563eb",
+    borderRadius: 8,
+    cursor: "pointer",
+    marginBottom: 12
+  },
+  info: {
+    textAlign: "center",
+    marginBottom: 12,
+    opacity: 0.8
+  },
+  list: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 12
+  },
+  textCard: {
+    background: "#111",
+    borderRadius: 12,
+    padding: 12,
+    border: "2px solid #333"
+  },
+  cardHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8
+  },
+  icons: {
+    display: "flex",
+    gap: 6
+  },
+  text: {
+    fontSize: 14,
+    lineHeight: 1.5,
+    maxHeight: 160,
+    overflowY: "auto",
+    whiteSpace: "pre-wrap"
+  }
+};
 

@@ -1,85 +1,89 @@
+
 import OpenAI from "openai";
+import Busboy from "busboy";
 
-export async function handler(event) {
-  try {
-    console.log("OCR function invoked");
+export const handler = async (event) => {
+  console.log("OCR function invoked");
 
-    // ===== 1. Validação básica =====
-    if (event.httpMethod !== "POST") {
-      return {
-        statusCode: 405,
-        body: JSON.stringify({ error: "Method not allowed" }),
-      };
-    }
-
-    if (!process.env.OPENAI_API_KEY) {
-      console.error("OPENAI_API_KEY not found");
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ error: "API key not configured" }),
-      };
-    }
-
-    // ===== 2. Parse do body =====
-    const body = JSON.parse(event.body || "{}");
-    const imageBase64 = body.image;
-
-    if (!imageBase64) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ error: "Image not provided" }),
-      };
-    }
-
-    // ===== 3. Cliente OpenAI =====
-    const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
-
-    // ===== 4. Chamada OCR (Vision) =====
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: "Extraia TODO o texto legível desta imagem. Não explique nada.",
-            },
-            {
-              type: "image_url",
-              image_url: {
-                url: imageBase64, // data:image/png;base64,...
-              },
-            },
-          ],
-        },
-      ],
-      max_tokens: 1000,
-    });
-
-    const extractedText =
-      response.choices?.[0]?.message?.content || "";
-
-    // ===== 5. Resposta =====
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        success: true,
-        text: extractedText,
-      }),
-    };
-  } catch (error) {
-    console.error("OCR error:", error);
-
+  if (!process.env.OPENAI_API_KEY) {
     return {
       statusCode: 500,
-      body: JSON.stringify({
-        success: false,
-        error: "OCR processing failed",
-      }),
+      body: JSON.stringify({ error: "API key not configured" })
     };
   }
-}
+
+  const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY
+  });
+
+  return new Promise((resolve) => {
+    const busboy = Busboy({
+      headers: event.headers
+    });
+
+    let imageBuffer = null;
+    let mimeType = "image/jpeg";
+
+    busboy.on("file", (_, file, info) => {
+      const chunks = [];
+      mimeType = info.mimeType || "image/jpeg";
+
+      file.on("data", (data) => chunks.push(data));
+      file.on("end", () => {
+        imageBuffer = Buffer.concat(chunks);
+      });
+    });
+
+    busboy.on("finish", async () => {
+      if (!imageBuffer) {
+        resolve({
+          statusCode: 400,
+          body: JSON.stringify({ error: "No image received" })
+        });
+        return;
+      }
+
+      try {
+        const base64Image = imageBuffer.toString("base64");
+
+        const response = await openai.responses.create({
+          model: "gpt-4.1-mini",
+          input: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "input_text",
+                  text: "Transcreva todo o texto da imagem em português."
+                },
+                {
+                  type: "input_image",
+                  image_url: `data:${mimeType};base64,${base64Image}`
+                }
+              ]
+            }
+          ]
+        });
+
+        const text =
+          response.output_text ||
+          response.output?.[0]?.content?.[0]?.text ||
+          "";
+
+        resolve({
+          statusCode: 200,
+          body: JSON.stringify({ text })
+        });
+      } catch (err) {
+        console.error("OCR error:", err);
+        resolve({
+          statusCode: 500,
+          body: JSON.stringify({ error: "OCR failed" })
+        });
+      }
+    });
+
+    busboy.end(Buffer.from(event.body, "base64"));
+  });
+};
 
