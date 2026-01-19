@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 export default function App() {
-  const [texts, setTexts] = useState([]); // múltiplos cards
+  const [texts, setTexts] = useState([]);
   const [activeIndex, setActiveIndex] = useState(null);
   const [loading, setLoading] = useState(false);
   const [speaking, setSpeaking] = useState(false);
@@ -11,7 +11,7 @@ export default function App() {
      OCR
   ========================== */
   async function handleImageUpload(e) {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (!file) return;
 
     setLoading(true);
@@ -33,7 +33,7 @@ export default function App() {
       } else {
         alert("Não foi possível ler a imagem.");
       }
-    } catch (err) {
+    } catch {
       alert("Erro ao processar OCR.");
     } finally {
       setLoading(false);
@@ -90,12 +90,13 @@ export default function App() {
       <div style={styles.card}>
         <h1 style={styles.title}>Heitor Reader</h1>
 
-        {/* Upload */}
+        {/* SCANNER MOBILE */}
         <label style={styles.upload}>
           📷 Selecionar imagem
           <input
             type="file"
             accept="image/*"
+            capture="environment"
             onChange={handleImageUpload}
             hidden
           />
@@ -103,7 +104,6 @@ export default function App() {
 
         {loading && <p style={styles.info}>Processando OCR…</p>}
 
-        {/* Cards agrupados */}
         <div style={styles.list}>
           {texts.map((text, i) => (
             <div
