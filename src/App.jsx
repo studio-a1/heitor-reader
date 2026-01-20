@@ -1,19 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 
+const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
+
 export default function App() {
   const [texts, setTexts] = useState([]);
   const [activeIndex, setActiveIndex] = useState(null);
   const [loading, setLoading] = useState(false);
   const [speaking, setSpeaking] = useState(false);
-
   const utteranceRef = useRef(null);
 
-  /* =========================
-     OCR
-  ========================== */
+  /* ================= OCR ================= */
   async function processImage(file) {
     if (!file) return;
-
     setLoading(true);
 
     const formData = new FormData();
@@ -24,7 +22,6 @@ export default function App() {
         method: "POST",
         body: formData
       });
-
       const data = await res.json();
 
       if (data.text) {
@@ -33,31 +30,28 @@ export default function App() {
       } else {
         alert("Não foi possível ler a imagem.");
       }
-    } catch {
-      alert("Erro ao processar OCR.");
     } finally {
       setLoading(false);
     }
   }
 
-  /* =========================
-     VOZ
-  ========================== */
-  function startSpeech(index) {
+  /* ================= VOZ ================= */
+  function speak(index) {
     stopSpeech();
-
     const text = texts[index];
     if (!text) return;
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "pt-BR";
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "pt-BR";
 
-    utterance.onstart = () => setSpeaking(true);
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = () => setSpeaking(false);
+    u.onstart = () => setSpeaking(true);
+    u.onend = () => {
+      setSpeaking(false);
+      if (index + 1 < texts.length) speak(index + 1);
+    };
 
-    utteranceRef.current = utterance;
-    speechSynthesis.speak(utterance);
+    utteranceRef.current = u;
+    speechSynthesis.speak(u);
     setActiveIndex(index);
   }
 
@@ -67,8 +61,10 @@ export default function App() {
   }
 
   function resumeSpeech() {
-    speechSynthesis.resume();
-    setSpeaking(true);
+    if (speechSynthesis.paused) {
+      speechSynthesis.resume();
+      setSpeaking(true);
+    }
   }
 
   function stopSpeech() {
@@ -78,12 +74,10 @@ export default function App() {
 
   useEffect(() => () => speechSynthesis.cancel(), []);
 
-  /* =========================
-     UI
-  ========================== */
+  /* ================= UI ================= */
   return (
     <div className="min-h-screen bg-zinc-900 text-zinc-100 flex justify-center p-4">
-      <div className="w-full max-w-4xl bg-zinc-800 rounded-2xl shadow-xl p-4 space-y-4">
+      <div className="w-full max-w-5xl bg-zinc-800 rounded-2xl p-4 space-y-4">
 
         <h1 className="text-center text-xl font-semibold">
           Heitor Reader
@@ -91,21 +85,20 @@ export default function App() {
 
         {/* AÇÕES */}
         <div className="flex gap-3 justify-center">
-
-          {/* SCANNER */}
-          <label className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg cursor-pointer">
-            📷 Scanner
+          {/* BOTÃO A */}
+          <label className="bg-green-600 px-4 py-2 rounded cursor-pointer">
+            {isMobile ? "📷 Scanner" : "🖼 Imagem"}
             <input
               type="file"
               accept="image/*"
-              capture="environment"
+              {...(isMobile ? { capture: "environment" } : {})}
               hidden
               onChange={e => processImage(e.target.files[0])}
             />
           </label>
 
-          {/* IMAGEM */}
-          <label className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg cursor-pointer">
+          {/* BOTÃO B */}
+          <label className="bg-blue-600 px-4 py-2 rounded cursor-pointer">
             🖼 Imagem
             <input
               type="file"
@@ -114,68 +107,38 @@ export default function App() {
               onChange={e => processImage(e.target.files[0])}
             />
           </label>
-
         </div>
 
-        {loading && (
+        {loading && <p className="text-center opacity-70">Processando OCR…</p>}
+
+        {/* PROGRESSO */}
+        {activeIndex !== null && (
           <p className="text-center text-sm opacity-70">
-            Processando OCR…
+            Página {activeIndex + 1} / {texts.length}
           </p>
         )}
 
         {/* CARDS */}
-        <div className="flex gap-3 overflow-x-auto pb-2">
+        <div className="flex gap-3 overflow-x-auto">
           {texts.map((text, i) => (
             <div
               key={i}
-              onClick={() => {
-                stopSpeech();
-                setActiveIndex(i);
-              }}
-              className={`min-w-[280px] max-w-[280px] cursor-pointer rounded-xl border-2 p-3 transition
-                ${activeIndex === i
+              onClick={() => setActiveIndex(i)}
+              className={`min-w-[300px] p-3 rounded-xl border-2 cursor-pointer
+                ${i === activeIndex
                   ? "border-green-400 bg-zinc-700"
                   : "border-zinc-600 bg-zinc-900"
                 }`}
             >
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-sm">📄 Página {i + 1}</span>
-
+              <div className="flex justify-between mb-2">
+                <span>📄 {i + 1}</span>
                 <div className="flex gap-1">
-                  {!speaking || activeIndex !== i ? (
-                    <button
-                      onClick={e => {
-                        e.stopPropagation();
-                        startSpeech(i);
-                      }}
-                      className="px-2 bg-green-600 rounded"
-                    >▶</button>
-                  ) : (
-                    <button
-                      onClick={e => {
-                        e.stopPropagation();
-                        pauseSpeech();
-                      }}
-                      className="px-2 bg-yellow-500 rounded"
-                    >⏸</button>
-                  )}
-                  <button
-                    onClick={e => {
-                      e.stopPropagation();
-                      resumeSpeech();
-                    }}
-                    className="px-2 bg-blue-600 rounded"
-                  >⏵</button>
-                  <button
-                    onClick={e => {
-                      e.stopPropagation();
-                      stopSpeech();
-                    }}
-                    className="px-2 bg-red-600 rounded"
-                  >⏹</button>
+                  <button onClick={() => speak(i)}>▶</button>
+                  <button onClick={pauseSpeech}>⏸</button>
+                  <button onClick={resumeSpeech}>⏵</button>
+                  <button onClick={stopSpeech}>⏹</button>
                 </div>
               </div>
-
               <div className="text-sm max-h-40 overflow-y-auto whitespace-pre-wrap">
                 {text}
               </div>
@@ -183,12 +146,7 @@ export default function App() {
           ))}
         </div>
 
-        {texts.length === 0 && (
-          <p className="text-center text-sm opacity-60">
-            Nenhuma página ainda.
-          </p>
-        )}
       </div>
     </div>
   );
-}
+  }
