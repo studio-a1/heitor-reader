@@ -7,15 +7,16 @@ export default function App() {
   const [speaking, setSpeaking] = useState(false);
 
   const utteranceRef = useRef(null);
-  const fileInputRef = useRef(null);
 
-  /* OCR */
+  /* =========================
+     OCR
+  ========================== */
   async function handleImageUpload(e) {
-    if (loading) return;
-    const file = e.target.files?.[0];
+    const file = e.target.files[0];
     if (!file) return;
 
     setLoading(true);
+
     const formData = new FormData();
     formData.append("image", file);
 
@@ -24,34 +25,42 @@ export default function App() {
         method: "POST",
         body: formData
       });
+
       const data = await res.json();
 
       if (data.text) {
         setTexts(prev => [...prev, data.text]);
         setActiveIndex(texts.length);
-      } else alert("Não foi possível ler a imagem.");
-    } catch {
+      } else {
+        alert("Não foi possível ler a imagem.");
+      }
+    } catch (err) {
       alert("Erro ao processar OCR.");
     } finally {
       setLoading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
 
-  /* VOZ */
+  /* =========================
+     VOZ
+  ========================== */
   function startSpeech(index) {
     stopSpeech();
+
     const text = texts[index];
     if (!text) return;
 
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = "pt-BR";
-    utter.onstart = () => setSpeaking(true);
-    utter.onend = () => setSpeaking(false);
-    utter.onerror = () => setSpeaking(false);
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "pt-BR";
+    utterance.rate = 1;
+    utterance.pitch = 1;
 
-    utteranceRef.current = utter;
-    speechSynthesis.speak(utter);
+    utterance.onstart = () => setSpeaking(true);
+    utterance.onend = () => setSpeaking(false);
+    utterance.onerror = () => setSpeaking(false);
+
+    utteranceRef.current = utterance;
+    speechSynthesis.speak(utterance);
     setActiveIndex(index);
   }
 
@@ -70,98 +79,119 @@ export default function App() {
     setSpeaking(false);
   }
 
-  useEffect(() => () => speechSynthesis.cancel(), []);
+  useEffect(() => {
+    return () => speechSynthesis.cancel();
+  }, []);
 
-  /* UI */
+  /* =========================
+     UI
+  ========================== */
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-200 flex justify-center p-4">
-      <div className="w-full max-w-xl bg-neutral-900 p-5 rounded-2xl shadow-xl">
-        <h1 className="text-center text-lg font-semibold mb-4">
+    <div className="min-h-screen bg-zinc-900 text-zinc-100 flex items-center justify-center p-4">
+      <div className="w-full max-w-4xl bg-zinc-800 rounded-2xl shadow-xl p-4 space-y-4">
+
+        <h1 className="text-center text-xl font-semibold">
           Heitor Reader
         </h1>
 
-        {/* Scanner */}
-        <label className="block text-center bg-blue-600 hover:bg-blue-700 rounded-lg py-3 cursor-pointer mb-4">
-          📷 Ler imagem
+        {/* Upload */}
+        <label className="block text-center bg-blue-600 hover:bg-blue-700 transition rounded-lg py-3 cursor-pointer">
+          📷 Selecionar imagem / Scanner
           <input
-            ref={fileInputRef}
             type="file"
             accept="image/*"
             capture="environment"
-            onChange={handleImageUpload}
             hidden
+            onChange={handleImageUpload}
           />
         </label>
 
         {loading && (
-          <p className="text-center text-sm opacity-70 mb-3">
+          <p className="text-center text-sm opacity-70">
             Processando OCR…
           </p>
         )}
 
-        {/* Cards */}
-        <div className="flex flex-col gap-3">
-          {texts.map((text, i) => {
-            const isActive = activeIndex === i;
+        {/* Cards horizontais */}
+        <div className="flex gap-3 overflow-x-auto pb-2">
+          {texts.map((text, i) => (
+            <div
+              key={i}
+              onClick={() => {
+                stopSpeech();
+                setActiveIndex(i);
+              }}
+              className={`min-w-[280px] max-w-[280px] cursor-pointer rounded-xl border-2 p-3 transition
+                ${
+                  activeIndex === i
+                    ? "border-green-400 bg-zinc-700"
+                    : "border-zinc-600 bg-zinc-900"
+                }`}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium">
+                  📄 Página {i + 1}
+                </span>
 
-            return (
-              <div
-                key={i}
-                className={`rounded-xl border-2 transition ${
-                  isActive
-                    ? "border-emerald-400 bg-neutral-800"
-                    : "border-neutral-700 bg-neutral-850"
-                } p-3`}
-              >
-                <div className="flex justify-between items-center">
-                  <span className="text-sm opacity-80">
-                    📄 Texto {i + 1}
-                  </span>
-
-                  {isActive && (
-                    <div className="flex gap-3 text-lg">
-                      {!speaking ? (
-                        <button
-                          onClick={() => startSpeech(i)}
-                          className="text-neutral-300 hover:text-white"
-                        >
-                          ▶
-                        </button>
-                      ) : (
-                        <button
-                          onClick={pauseSpeech}
-                          className="text-emerald-400"
-                        >
-                          ⏸
-                        </button>
-                      )}
-
-                      <button
-                        onClick={resumeSpeech}
-                        className="text-yellow-400"
-                      >
-                        ⏵
-                      </button>
-
-                      <button
-                        onClick={stopSpeech}
-                        className="text-red-400"
-                      >
-                        ⏹
-                      </button>
-                    </div>
+                <div className="flex gap-1">
+                  {!speaking || activeIndex !== i ? (
+                    <button
+                      onClick={e => {
+                        e.stopPropagation();
+                        startSpeech(i);
+                      }}
+                      className="px-2 py-1 bg-green-600 rounded"
+                    >
+                      ▶
+                    </button>
+                  ) : (
+                    <button
+                      onClick={e => {
+                        e.stopPropagation();
+                        pauseSpeech();
+                      }}
+                      className="px-2 py-1 bg-yellow-500 rounded"
+                    >
+                      ⏸
+                    </button>
                   )}
-                </div>
 
-                {isActive && (
-                  <div className="mt-2 text-sm leading-relaxed max-h-44 overflow-y-auto whitespace-pre-wrap">
-                    {text}
-                  </div>
-                )}
+                  <button
+                    onClick={e => {
+                      e.stopPropagation();
+                      resumeSpeech();
+                    }}
+                    className="px-2 py-1 bg-blue-600 rounded"
+                  >
+                    ⏵
+                  </button>
+
+                  <button
+                    onClick={e => {
+                      e.stopPropagation();
+                      stopSpeech();
+                    }}
+                    className="px-2 py-1 bg-red-600 rounded"
+                  >
+                    ⏹
+                  </button>
+                </div>
               </div>
-            );
-          })}
+
+              {/* Texto */}
+              <div className="text-sm leading-relaxed max-h-40 overflow-y-auto whitespace-pre-wrap">
+                {text}
+              </div>
+            </div>
+          ))}
         </div>
+
+        {texts.length === 0 && (
+          <p className="text-center text-sm opacity-60">
+            Nenhuma página escaneada ainda.
+          </p>
+        )}
       </div>
     </div>
   );
