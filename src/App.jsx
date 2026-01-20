@@ -9,17 +9,13 @@ export default function App() {
   const utteranceRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  /* =========================
-     OCR (mobile-safe)
-  ========================== */
+  /* OCR */
   async function handleImageUpload(e) {
-    if (loading) return; // 🔒 lock contra loop mobile
-
+    if (loading) return;
     const file = e.target.files?.[0];
     if (!file) return;
 
     setLoading(true);
-
     const formData = new FormData();
     formData.append("image", file);
 
@@ -28,47 +24,34 @@ export default function App() {
         method: "POST",
         body: formData
       });
-
       const data = await res.json();
 
       if (data.text) {
         setTexts(prev => [...prev, data.text]);
         setActiveIndex(texts.length);
-      } else {
-        alert("Não foi possível ler a imagem.");
-      }
-    } catch (err) {
+      } else alert("Não foi possível ler a imagem.");
+    } catch {
       alert("Erro ao processar OCR.");
     } finally {
       setLoading(false);
-
-      // 🔁 reset do input (EVITA loop no mobile)
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
 
-  /* =========================
-     LEITURA POR VOZ
-  ========================== */
+  /* VOZ */
   function startSpeech(index) {
     stopSpeech();
-
     const text = texts[index];
     if (!text) return;
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "pt-BR";
-    utterance.rate = 1;
-    utterance.pitch = 1;
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "pt-BR";
+    utter.onstart = () => setSpeaking(true);
+    utter.onend = () => setSpeaking(false);
+    utter.onerror = () => setSpeaking(false);
 
-    utterance.onstart = () => setSpeaking(true);
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = () => setSpeaking(false);
-
-    utteranceRef.current = utterance;
-    speechSynthesis.speak(utterance);
+    utteranceRef.current = utter;
+    speechSynthesis.speak(utter);
     setActiveIndex(index);
   }
 
@@ -87,22 +70,18 @@ export default function App() {
     setSpeaking(false);
   }
 
-  useEffect(() => {
-    return () => speechSynthesis.cancel();
-  }, []);
+  useEffect(() => () => speechSynthesis.cancel(), []);
 
-  /* =========================
-     UI (inalterada conceitualmente)
-  ========================== */
+  /* UI */
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-200 flex items-center justify-center font-sans">
-      <div className="w-full max-w-xl bg-neutral-900 p-6 rounded-2xl shadow-2xl">
-        <h1 className="text-center text-xl font-semibold mb-4">
+    <div className="min-h-screen bg-neutral-950 text-neutral-200 flex justify-center p-4">
+      <div className="w-full max-w-xl bg-neutral-900 p-5 rounded-2xl shadow-xl">
+        <h1 className="text-center text-lg font-semibold mb-4">
           Heitor Reader
         </h1>
 
-        {/* Upload / Scanner */}
-        <label className="block text-center bg-blue-600 hover:bg-blue-700 transition rounded-lg py-3 cursor-pointer mb-3">
+        {/* Scanner */}
+        <label className="block text-center bg-blue-600 hover:bg-blue-700 rounded-lg py-3 cursor-pointer mb-4">
           📷 Ler imagem
           <input
             ref={fileInputRef}
@@ -115,43 +94,76 @@ export default function App() {
         </label>
 
         {loading && (
-          <p className="text-center text-sm opacity-80 mb-3">
+          <p className="text-center text-sm opacity-70 mb-3">
             Processando OCR…
           </p>
         )}
 
         {/* Cards */}
         <div className="flex flex-col gap-3">
-          {texts.map((text, i) => (
-            <div
-              key={i}
-              className={`bg-neutral-800 rounded-xl p-3 border-2 ${
-                activeIndex === i
-                  ? "border-emerald-400"
-                  : "border-neutral-700"
-              }`}
-            >
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-sm">📄 Texto {i + 1}</span>
+          {texts.map((text, i) => {
+            const isActive = activeIndex === i;
 
-                <div className="flex gap-2 text-sm">
-                  {!speaking || activeIndex !== i ? (
-                    <button onClick={() => startSpeech(i)}>▶</button>
-                  ) : (
-                    <button onClick={pauseSpeech}>⏸</button>
+            return (
+              <div
+                key={i}
+                className={`rounded-xl border-2 transition ${
+                  isActive
+                    ? "border-emerald-400 bg-neutral-800"
+                    : "border-neutral-700 bg-neutral-850"
+                } p-3`}
+              >
+                <div className="flex justify-between items-center">
+                  <span className="text-sm opacity-80">
+                    📄 Texto {i + 1}
+                  </span>
+
+                  {isActive && (
+                    <div className="flex gap-3 text-lg">
+                      {!speaking ? (
+                        <button
+                          onClick={() => startSpeech(i)}
+                          className="text-neutral-300 hover:text-white"
+                        >
+                          ▶
+                        </button>
+                      ) : (
+                        <button
+                          onClick={pauseSpeech}
+                          className="text-emerald-400"
+                        >
+                          ⏸
+                        </button>
+                      )}
+
+                      <button
+                        onClick={resumeSpeech}
+                        className="text-yellow-400"
+                      >
+                        ⏵
+                      </button>
+
+                      <button
+                        onClick={stopSpeech}
+                        className="text-red-400"
+                      >
+                        ⏹
+                      </button>
+                    </div>
                   )}
-                  <button onClick={resumeSpeech}>⏵</button>
-                  <button onClick={stopSpeech}>⏹</button>
                 </div>
-              </div>
 
-              <div className="text-sm leading-relaxed max-h-40 overflow-y-auto whitespace-pre-wrap">
-                {text}
+                {isActive && (
+                  <div className="mt-2 text-sm leading-relaxed max-h-44 overflow-y-auto whitespace-pre-wrap">
+                    {text}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
   );
 }
+
