@@ -5,12 +5,16 @@ export default function App() {
   const [activeIndex, setActiveIndex] = useState(null);
   const [loading, setLoading] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+
   const utteranceRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   /* =========================
-     OCR
+     OCR (mobile-safe)
   ========================== */
   async function handleImageUpload(e) {
+    if (loading) return; // 🔒 lock contra loop mobile
+
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -33,15 +37,20 @@ export default function App() {
       } else {
         alert("Não foi possível ler a imagem.");
       }
-    } catch {
+    } catch (err) {
       alert("Erro ao processar OCR.");
     } finally {
       setLoading(false);
+
+      // 🔁 reset do input (EVITA loop no mobile)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     }
   }
 
   /* =========================
-     LEITURA
+     LEITURA POR VOZ
   ========================== */
   function startSpeech(index) {
     stopSpeech();
@@ -83,17 +92,20 @@ export default function App() {
   }, []);
 
   /* =========================
-     UI
+     UI (inalterada conceitualmente)
   ========================== */
   return (
-    <div style={styles.page}>
-      <div style={styles.card}>
-        <h1 style={styles.title}>Heitor Reader</h1>
+    <div className="min-h-screen bg-neutral-950 text-neutral-200 flex items-center justify-center font-sans">
+      <div className="w-full max-w-xl bg-neutral-900 p-6 rounded-2xl shadow-2xl">
+        <h1 className="text-center text-xl font-semibold mb-4">
+          Heitor Reader
+        </h1>
 
-        {/* SCANNER MOBILE */}
-        <label style={styles.upload}>
-          📷 Selecionar imagem
+        {/* Upload / Scanner */}
+        <label className="block text-center bg-blue-600 hover:bg-blue-700 transition rounded-lg py-3 cursor-pointer mb-3">
+          📷 Ler imagem
           <input
+            ref={fileInputRef}
             type="file"
             accept="image/*"
             capture="environment"
@@ -102,21 +114,27 @@ export default function App() {
           />
         </label>
 
-        {loading && <p style={styles.info}>Processando OCR…</p>}
+        {loading && (
+          <p className="text-center text-sm opacity-80 mb-3">
+            Processando OCR…
+          </p>
+        )}
 
-        <div style={styles.list}>
+        {/* Cards */}
+        <div className="flex flex-col gap-3">
           {texts.map((text, i) => (
             <div
               key={i}
-              style={{
-                ...styles.textCard,
-                borderColor: activeIndex === i ? "#4ade80" : "#333"
-              }}
+              className={`bg-neutral-800 rounded-xl p-3 border-2 ${
+                activeIndex === i
+                  ? "border-emerald-400"
+                  : "border-neutral-700"
+              }`}
             >
-              <div style={styles.cardHeader}>
-                <span>📄 Texto {i + 1}</span>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm">📄 Texto {i + 1}</span>
 
-                <div style={styles.icons}>
+                <div className="flex gap-2 text-sm">
                   {!speaking || activeIndex !== i ? (
                     <button onClick={() => startSpeech(i)}>▶</button>
                   ) : (
@@ -127,7 +145,9 @@ export default function App() {
                 </div>
               </div>
 
-              <div style={styles.text}>{text}</div>
+              <div className="text-sm leading-relaxed max-h-40 overflow-y-auto whitespace-pre-wrap">
+                {text}
+              </div>
             </div>
           ))}
         </div>
@@ -135,73 +155,3 @@ export default function App() {
     </div>
   );
 }
-
-/* =========================
-   STYLES
-========================= */
-const styles = {
-  page: {
-    minHeight: "100vh",
-    background: "#0f0f0f",
-    color: "#e5e5e5",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontFamily: "system-ui"
-  },
-  card: {
-    width: "100%",
-    maxWidth: 700,
-    background: "#181818",
-    padding: 24,
-    borderRadius: 16,
-    boxShadow: "0 10px 30px rgba(0,0,0,.6)"
-  },
-  title: {
-    textAlign: "center",
-    marginBottom: 16
-  },
-  upload: {
-    display: "block",
-    textAlign: "center",
-    padding: 12,
-    background: "#2563eb",
-    borderRadius: 8,
-    cursor: "pointer",
-    marginBottom: 12
-  },
-  info: {
-    textAlign: "center",
-    marginBottom: 12,
-    opacity: 0.8
-  },
-  list: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 12
-  },
-  textCard: {
-    background: "#111",
-    borderRadius: 12,
-    padding: 12,
-    border: "2px solid #333"
-  },
-  cardHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8
-  },
-  icons: {
-    display: "flex",
-    gap: 6
-  },
-  text: {
-    fontSize: 14,
-    lineHeight: 1.5,
-    maxHeight: 160,
-    overflowY: "auto",
-    whiteSpace: "pre-wrap"
-  }
-};
-
