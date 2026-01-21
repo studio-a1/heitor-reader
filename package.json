@@ -12,6 +12,7 @@
   "dependencies": {
     "busboy": "^1.6.0",
     "openai": "^6.16.0",
+    "pdfjs-dist": "^5.4.530",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

@@ -1,7 +1,7 @@
 {
   "version": 3,
   "sources": ["../../home/cesar/heitor-reader/netlify/functions/reader.js"],
-  "sourceRoot": "/tmp/tmp-1570829-RpI0GkljfprH",
+  "sourceRoot": "/tmp/tmp-2051322-kCwB574wJPQl",
   "sourcesContent": ["export async function handler(event) {\n  return {\n    statusCode: 200,\n    body: JSON.stringify({ reader: \"ok\" }),\n  };\n}\n\n"],
   "mappings": ";;;;;;;;;;;;;;;;;;;AAAA;AAAA;AAAA;AAAA;AAAA;AAAA,eAAsB,QAAQ,OAAO;AACnC,SAAO;AAAA,IACL,YAAY;AAAA,IACZ,MAAM,KAAK,UAAU,EAAE,QAAQ,KAAK,CAAC;AAAA,EACvC;AACF;",
   "names": []
