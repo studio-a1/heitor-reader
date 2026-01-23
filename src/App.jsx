@@ -4,11 +4,10 @@ export default function App() {
   const [texts, setTexts] = useState([]);
   const [activeIndex, setActiveIndex] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [playerState, setPlayerState] = useState("idle"); 
+  // idle | playing | paused
 
- const [playerState, setPlayerState] = useState("idle"); 
-// idle | playing | paused
-const utteranceRef = useRef(null);
-
+  const utteranceRef = useRef(null);
 
   /* =========================
      OCR
@@ -36,68 +35,73 @@ const utteranceRef = useRef(null);
         alert("Não foi possível ler a imagem.");
       }
     } catch {
-      alert("Erro no OCR.");
+      alert("Erro ao processar OCR.");
     } finally {
       setLoading(false);
     }
   }
 
   /* =========================
-     SPEECH
+     PLAYER
   ========================== */
-function play(index) {
-  // sempre zera antes de começar
-  speechSynthesis.cancel();
-  utteranceRef.current = null;
 
-  const text = texts[index];
-  if (!text) return;
-
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "pt-BR";
-
-  utterance.onstart = () => {
-    setPlayerState("playing");
-    setActiveIndex(index);
-  };
-
-  utterance.onend = () => {
-    setPlayerState("idle");
+  // PLAY → sempre começa do zero
+  function play(index) {
+    speechSynthesis.cancel();
     utteranceRef.current = null;
-  };
 
-  utterance.onerror = () => {
-    setPlayerState("idle");
-    utteranceRef.current = null;
-  };
+    const text = texts[index];
+    if (!text) return;
 
-  utteranceRef.current = utterance;
-  speechSynthesis.speak(utterance);
-}
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "pt-BR";
+    utterance.rate = 1;
+    utterance.pitch = 1;
 
+    utterance.onstart = () => {
+      setPlayerState("playing");
+      setActiveIndex(index);
+    };
 
-function pauseOrResume() {
-  if (!utteranceRef.current) return;
+    utterance.onend = () => {
+      setPlayerState("idle");
+      utteranceRef.current = null;
+    };
 
-  if (playerState === "playing") {
-    speechSynthesis.pause();
-    setPlayerState("paused");
-  } 
-  else if (playerState === "paused") {
-    speechSynthesis.resume();
-    setPlayerState("playing");
+    utterance.onerror = () => {
+      setPlayerState("idle");
+      utteranceRef.current = null;
+    };
+
+    utteranceRef.current = utterance;
+    speechSynthesis.speak(utterance);
   }
-}
 
+  // PAUSE / CONTINUE
+  function pauseOrResume() {
+    if (!utteranceRef.current) return;
 
- function stop() {
-  speechSynthesis.cancel();
-  utteranceRef.current = null;
-  setPlayerState("idle");
-}
+    if (playerState === "playing") {
+      speechSynthesis.pause();
+      setPlayerState("paused");
+    } else if (playerState === "paused") {
+      speechSynthesis.resume();
+      setPlayerState("playing");
+    }
+  }
 
+  // STOP
+  function stop() {
+    speechSynthesis.cancel();
+    utteranceRef.current = null;
+    setPlayerState("idle");
+  }
 
-
+  useEffect(() => {
+    return () => {
+      speechSynthesis.cancel();
+    };
+  }, []);
 
   /* =========================
      UI
@@ -105,7 +109,6 @@ function pauseOrResume() {
   return (
     <div className="min-h-screen bg-neutral-900 text-neutral-200 flex justify-center p-4">
       <div className="w-full max-w-4xl bg-neutral-800 rounded-2xl p-4">
-
         <h1 className="text-center text-xl mb-4">Heitor Reader</h1>
 
         {/* BOTÕES INICIAIS */}
