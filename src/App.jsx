@@ -4,7 +4,7 @@ export default function App() {
   const [texts, setTexts] = useState([]);
   const [activeIndex, setActiveIndex] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [playerState, setPlayerState] = useState("idle"); 
+  const [playerState, setPlayerState] = useState("idle");
   // idle | playing | paused
 
   const utteranceRef = useRef(null);
@@ -42,10 +42,9 @@ export default function App() {
   }
 
   /* =========================
-     PLAYER
+     PLAYER (PAUSE / CONTINUE CORRETO)
   ========================== */
 
-  // PLAY → sempre começa do zero
   function play(index) {
     speechSynthesis.cancel();
     utteranceRef.current = null;
@@ -77,20 +76,21 @@ export default function App() {
     speechSynthesis.speak(utterance);
   }
 
-  // PAUSE / CONTINUE
   function pauseOrResume() {
     if (!utteranceRef.current) return;
 
-    if (playerState === "playing") {
+    if (speechSynthesis.speaking && !speechSynthesis.paused) {
       speechSynthesis.pause();
       setPlayerState("paused");
-    } else if (playerState === "paused") {
+      return;
+    }
+
+    if (speechSynthesis.paused) {
       speechSynthesis.resume();
       setPlayerState("playing");
     }
   }
 
-  // STOP
   function stop() {
     speechSynthesis.cancel();
     utteranceRef.current = null;
@@ -111,7 +111,6 @@ export default function App() {
       <div className="w-full max-w-4xl bg-neutral-800 rounded-2xl p-4">
         <h1 className="text-center text-xl mb-4">Heitor Reader</h1>
 
-        {/* BOTÕES INICIAIS */}
         <div className="flex gap-2 justify-center mb-4">
           <label className="px-3 py-2 bg-blue-600 rounded cursor-pointer text-sm">
             📷 Scanner
@@ -148,7 +147,6 @@ export default function App() {
           </p>
         )}
 
-        {/* CARDS */}
         <div className="flex gap-3 overflow-x-auto">
           {texts.map((text, i) => (
             <div
@@ -160,7 +158,6 @@ export default function App() {
               <div className="flex justify-between items-center mb-2 text-sm">
                 <span>Página {i + 1}</span>
 
-                {/* PLAYER */}
                 <div className="flex gap-1">
                   <button
                     onClick={() => play(i)}
@@ -195,3 +192,4 @@ export default function App() {
     </div>
   );
 }
+
