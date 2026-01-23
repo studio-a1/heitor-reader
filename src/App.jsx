@@ -8,6 +8,7 @@ export default function App() {
   // idle | playing | paused
 
   const utteranceRef = useRef(null);
+  const charIndexRef = useRef(0); // ← posição real da fala
 
   /* =========================
      OCR
@@ -42,17 +43,20 @@ export default function App() {
   }
 
   /* =========================
-     PLAYER (PAUSE / CONTINUE CORRETO)
+     PLAYER (CORREÇÃO DEFINITIVA)
   ========================== */
 
-  function play(index) {
+  function speakFrom(index, startChar = 0) {
     speechSynthesis.cancel();
     utteranceRef.current = null;
 
     const text = texts[index];
     if (!text) return;
 
-    const utterance = new SpeechSynthesisUtterance(text);
+    const utterance = new SpeechSynthesisUtterance(
+      text.slice(startChar)
+    );
+
     utterance.lang = "pt-BR";
     utterance.rate = 1;
     utterance.pitch = 1;
@@ -62,8 +66,15 @@ export default function App() {
       setActiveIndex(index);
     };
 
+    utterance.onboundary = e => {
+      if (e.name === "word") {
+        charIndexRef.current = startChar + e.charIndex;
+      }
+    };
+
     utterance.onend = () => {
       setPlayerState("idle");
+      charIndexRef.current = 0;
       utteranceRef.current = null;
     };
 
@@ -76,24 +87,27 @@ export default function App() {
     speechSynthesis.speak(utterance);
   }
 
-  function pauseOrResume() {
-    if (!utteranceRef.current) return;
+  function play(index) {
+    charIndexRef.current = 0;
+    speakFrom(index, 0);
+  }
 
-    if (speechSynthesis.speaking && !speechSynthesis.paused) {
-      speechSynthesis.pause();
+  function pauseOrResume() {
+    if (playerState === "playing") {
+      speechSynthesis.cancel(); // pausa REAL
       setPlayerState("paused");
       return;
     }
 
-    if (speechSynthesis.paused) {
-      speechSynthesis.resume();
-      setPlayerState("playing");
+    if (playerState === "paused") {
+      speakFrom(activeIndex, charIndexRef.current);
     }
   }
 
   function stop() {
     speechSynthesis.cancel();
     utteranceRef.current = null;
+    charIndexRef.current = 0;
     setPlayerState("idle");
   }
 
