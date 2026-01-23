@@ -4,14 +4,16 @@ export default function App() {
   const [texts, setTexts] = useState([]);
   const [activeIndex, setActiveIndex] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
+
+  const [playerState, setPlayerState] = useState("idle"); 
+  // idle | playing | paused
 
   const utteranceRef = useRef(null);
 
   /* =========================
-     OCR (imagem)
+     OCR
   ========================== */
-  async function handleImage(file) {
+  async function handleImageUpload(file) {
     if (!file) return;
 
     setLoading(true);
@@ -29,22 +31,22 @@ export default function App() {
 
       if (data.text) {
         setTexts(prev => [...prev, data.text]);
-        setActiveIndex(prev => (prev === null ? 0 : prev));
+        setActiveIndex(texts.length);
       } else {
         alert("Não foi possível ler a imagem.");
       }
     } catch {
-      alert("Erro ao processar OCR.");
+      alert("Erro no OCR.");
     } finally {
       setLoading(false);
     }
   }
 
   /* =========================
-     LEITURA POR VOZ
+     SPEECH
   ========================== */
-  function playSpeech(index) {
-    stopSpeech();
+  function play(index) {
+    stop();
 
     const text = texts[index];
     if (!text) return;
@@ -52,24 +54,36 @@ export default function App() {
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "pt-BR";
 
-    utterance.onstart = () => setSpeaking(true);
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = () => setSpeaking(false);
+    utterance.onstart = () => {
+      setPlayerState("playing");
+      setActiveIndex(index);
+    };
+
+    utterance.onend = () => {
+      setPlayerState("idle");
+    };
+
+    utterance.onerror = () => {
+      setPlayerState("idle");
+    };
 
     utteranceRef.current = utterance;
     speechSynthesis.speak(utterance);
-    setActiveIndex(index);
   }
 
-  function continueSpeech() {
-    if (!utteranceRef.current) return;
-    speechSynthesis.speak(utteranceRef.current);
-    setSpeaking(true);
+  function pauseOrResume() {
+    if (playerState === "playing") {
+      speechSynthesis.pause();
+      setPlayerState("paused");
+    } else if (playerState === "paused") {
+      speechSynthesis.resume();
+      setPlayerState("playing");
+    }
   }
 
-  function stopSpeech() {
+  function stop() {
     speechSynthesis.cancel();
-    setSpeaking(false);
+    setPlayerState("idle");
   }
 
   useEffect(() => {
@@ -80,116 +94,92 @@ export default function App() {
      UI
   ========================== */
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-4">
-      <div className="w-full max-w-3xl bg-zinc-900 rounded-2xl shadow-xl p-5 space-y-4">
+    <div className="min-h-screen bg-neutral-900 text-neutral-200 flex justify-center p-4">
+      <div className="w-full max-w-4xl bg-neutral-800 rounded-2xl p-4">
 
-        <h1 className="text-xl font-semibold text-center">
-          Heitor Reader
-        </h1>
+        <h1 className="text-center text-xl mb-4">Heitor Reader</h1>
 
-        {/* ===== BARRA FIXA DE AÇÕES (3 BOTÕES) ===== */}
-        <div className="grid grid-cols-3 gap-3">
-
-          {/* SCANNER */}
-          <label className="text-center bg-green-600 hover:bg-green-500 transition rounded-lg py-3 cursor-pointer">
+        {/* BOTÕES INICIAIS */}
+        <div className="flex gap-2 justify-center mb-4">
+          <label className="px-3 py-2 bg-blue-600 rounded cursor-pointer text-sm">
             📷 Scanner
             <input
               type="file"
               accept="image/*"
               capture="environment"
               hidden
-              onChange={e => handleImage(e.target.files[0])}
+              onChange={e => handleImageUpload(e.target.files[0])}
             />
           </label>
 
-          {/* IMAGEM */}
-          <label className="text-center bg-blue-600 hover:bg-blue-500 transition rounded-lg py-3 cursor-pointer">
+          <label className="px-3 py-2 bg-indigo-600 rounded cursor-pointer text-sm">
             🖼 Imagem
             <input
               type="file"
               accept="image/*"
               hidden
-              onChange={e => handleImage(e.target.files[0])}
+              onChange={e => handleImageUpload(e.target.files[0])}
             />
           </label>
 
-          {/* PDF (base pronta) */}
           <button
             disabled
-            className="bg-zinc-700 rounded-lg py-3 opacity-50 cursor-not-allowed"
-            title="PDF disponível nos planos pagos"
+            className="px-3 py-2 bg-neutral-600 rounded text-sm opacity-50"
           >
             📄 PDF
           </button>
         </div>
 
         {loading && (
-          <p className="text-center text-sm opacity-70">
+          <p className="text-center text-sm opacity-70 mb-3">
             Processando OCR…
           </p>
         )}
 
-        {/* ===== MINI-CARDS ===== */}
-        {texts.length > 0 && (
-          <div className="flex gap-3 overflow-x-auto pb-2">
-            {texts.map((_, i) => (
-              <button
-                key={i}
-                onClick={() => setActiveIndex(i)}
-                className={`min-w-[60px] h-10 rounded-lg flex items-center justify-center text-sm font-medium transition
-                  ${activeIndex === i
-                    ? "bg-green-500 text-black"
-                    : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}
-                `}
-              >
-                {i + 1}
-              </button>
-            ))}
-          </div>
-        )}
+        {/* CARDS */}
+        <div className="flex gap-3 overflow-x-auto">
+          {texts.map((text, i) => (
+            <div
+              key={i}
+              className={`min-w-[260px] bg-neutral-900 rounded-xl p-3 border-2 ${
+                activeIndex === i ? "border-green-500" : "border-neutral-700"
+              }`}
+            >
+              <div className="flex justify-between items-center mb-2 text-sm">
+                <span>Página {i + 1}</span>
 
-        {/* ===== CARD ATIVO ===== */}
-        {activeIndex !== null && texts[activeIndex] && (
-          <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-3">
+                {/* PLAYER */}
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => play(i)}
+                    className="px-2 py-1 bg-green-600 rounded text-xs"
+                  >
+                    ▶
+                  </button>
 
-            <div className="flex justify-between items-center">
-              <span className="text-sm opacity-70">
-                Página {activeIndex + 1}
-              </span>
+                  <button
+                    onClick={pauseOrResume}
+                    className="px-2 py-1 bg-blue-600 rounded text-xs"
+                  >
+                    {playerState === "paused" ? "▶" : "⏸"}
+                  </button>
 
-              <div className="flex gap-2 text-lg">
-                <button
-                  onClick={() => playSpeech(activeIndex)}
-                  className={`px-3 py-1 rounded-lg ${
-                    speaking ? "bg-green-500 text-black" : "bg-zinc-800"
-                  }`}
-                >
-                  ▶
-                </button>
+                  <button
+                    onClick={stop}
+                    className="px-2 py-1 bg-red-600 rounded text-xs"
+                  >
+                    ⏹
+                  </button>
+                </div>
+              </div>
 
-                <button
-                  onClick={continueSpeech}
-                  className="px-3 py-1 rounded-lg bg-zinc-800"
-                >
-                  ⏭
-                </button>
-
-                <button
-                  onClick={stopSpeech}
-                  className="px-3 py-1 rounded-lg bg-red-600"
-                >
-                  ⏹
-                </button>
+              <div className="text-sm max-h-40 overflow-y-auto whitespace-pre-wrap">
+                {text}
               </div>
             </div>
-
-            <div className="text-sm leading-relaxed max-h-64 overflow-y-auto whitespace-pre-wrap">
-              {texts[activeIndex]}
-            </div>
-          </div>
-        )}
+          ))}
+        </div>
       </div>
     </div>
   );
 }
-
