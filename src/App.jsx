@@ -45,46 +45,58 @@ export default function App() {
   /* =========================
      SPEECH
   ========================== */
-  function play(index) {
-    stop();
-
-    const text = texts[index];
-    if (!text) return;
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "pt-BR";
-
-    utterance.onstart = () => {
-      setPlayerState("playing");
-      setActiveIndex(index);
-    };
-
-    utterance.onend = () => {
-      setPlayerState("idle");
-    };
-
-    utterance.onerror = () => {
-      setPlayerState("idle");
-    };
-
-    utteranceRef.current = utterance;
-    speechSynthesis.speak(utterance);
+ function play(index) {
+  // se estiver pausado no MESMO card → apenas continua
+  if (playerState === "paused" && activeIndex === index) {
+    speechSynthesis.resume();
+    setPlayerState("playing");
+    return;
   }
 
-  function pauseOrResume() {
-    if (playerState === "playing") {
-      speechSynthesis.pause();
-      setPlayerState("paused");
-    } else if (playerState === "paused") {
-      speechSynthesis.resume();
-      setPlayerState("playing");
-    }
-  }
+  // se estiver tocando outro card → cancela
+  speechSynthesis.cancel();
 
-  function stop() {
-    speechSynthesis.cancel();
+  const text = texts[index];
+  if (!text) return;
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "pt-BR";
+
+  utterance.onstart = () => {
+    setPlayerState("playing");
+    setActiveIndex(index);
+  };
+
+  utterance.onend = () => {
     setPlayerState("idle");
+  };
+
+  utterance.onerror = () => {
+    setPlayerState("idle");
+  };
+
+  utteranceRef.current = utterance;
+  speechSynthesis.speak(utterance);
+}
+
+function pauseOrResume() {
+  if (!utteranceRef.current) return;
+
+  if (playerState === "playing") {
+    speechSynthesis.pause();
+    setPlayerState("paused");
+  } else if (playerState === "paused") {
+    speechSynthesis.resume();
+    setPlayerState("playing");
   }
+}
+
+ function stop() {
+  speechSynthesis.cancel();
+  utteranceRef.current = null;
+  setPlayerState("idle");
+}
+
 
   useEffect(() => {
     return () => speechSynthesis.cancel();
