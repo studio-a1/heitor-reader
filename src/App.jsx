@@ -5,10 +5,10 @@ export default function App() {
   const [activeIndex, setActiveIndex] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const [playerState, setPlayerState] = useState("idle"); 
-  // idle | playing | paused
+ const [playerState, setPlayerState] = useState("idle"); 
+// idle | playing | paused
+const utteranceRef = useRef(null);
 
-  const utteranceRef = useRef(null);
 
   /* =========================
      OCR
@@ -45,16 +45,10 @@ export default function App() {
   /* =========================
      SPEECH
   ========================== */
- function play(index) {
-  // se estiver pausado no MESMO card → apenas continua
-  if (playerState === "paused" && activeIndex === index) {
-    speechSynthesis.resume();
-    setPlayerState("playing");
-    return;
-  }
-
-  // se estiver tocando outro card → cancela
+function play(index) {
+  // sempre zera antes de começar
   speechSynthesis.cancel();
+  utteranceRef.current = null;
 
   const text = texts[index];
   if (!text) return;
@@ -69,15 +63,18 @@ export default function App() {
 
   utterance.onend = () => {
     setPlayerState("idle");
+    utteranceRef.current = null;
   };
 
   utterance.onerror = () => {
     setPlayerState("idle");
+    utteranceRef.current = null;
   };
 
   utteranceRef.current = utterance;
   speechSynthesis.speak(utterance);
 }
+
 
 function pauseOrResume() {
   if (!utteranceRef.current) return;
@@ -85,11 +82,13 @@ function pauseOrResume() {
   if (playerState === "playing") {
     speechSynthesis.pause();
     setPlayerState("paused");
-  } else if (playerState === "paused") {
+  } 
+  else if (playerState === "paused") {
     speechSynthesis.resume();
     setPlayerState("playing");
   }
 }
+
 
  function stop() {
   speechSynthesis.cancel();
@@ -98,9 +97,7 @@ function pauseOrResume() {
 }
 
 
-  useEffect(() => {
-    return () => speechSynthesis.cancel();
-  }, []);
+
 
   /* =========================
      UI
