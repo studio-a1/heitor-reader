@@ -9,6 +9,7 @@ export default function App() {
 
   const queueRef = useRef([]);
   const queueIndexRef = useRef(0);
+  const chunkOffsetRef = useRef(0);
   const utteranceRef = useRef(null);
 
   /* =========================
@@ -42,7 +43,7 @@ export default function App() {
   }
 
   /* =========================
-     PLAYER (CORREÇÃO FINAL)
+     PLAYER (FINAL, SEM BUG)
   ========================== */
 
   function splitText(text, size = 180) {
@@ -55,29 +56,42 @@ export default function App() {
     return parts;
   }
 
-  function speakQueue() {
+  function speakCurrentChunk() {
     const chunk = queueRef.current[queueIndexRef.current];
     if (!chunk) {
       setPlayerState("idle");
       return;
     }
 
-    const utterance = new SpeechSynthesisUtterance(chunk);
+    const textToSpeak = chunk.slice(chunkOffsetRef.current);
+
+    const utterance = new SpeechSynthesisUtterance(textToSpeak);
     utterance.lang = "pt-BR";
     utterance.rate = 1;
+
+    utterance.onboundary = e => {
+      if (e.name === "word") {
+        chunkOffsetRef.current = e.charIndex;
+      }
+    };
 
     utterance.onend = () => {
       if (playerState === "playing") {
         queueIndexRef.current += 1;
-        speakQueue();
+        chunkOffsetRef.current = 0;
+        speakCurrentChunk();
       }
+    };
+
+    utterance.onerror = () => {
+      setPlayerState("idle");
     };
 
     utteranceRef.current = utterance;
     speechSynthesis.speak(utterance);
   }
 
-  // ▶ PLAY — sempre do início
+  // ▶ PLAY — sempre do zero
   function play(index) {
     speechSynthesis.cancel();
 
@@ -86,24 +100,25 @@ export default function App() {
 
     queueRef.current = splitText(text);
     queueIndexRef.current = 0;
+    chunkOffsetRef.current = 0;
 
     setActiveIndex(index);
     setPlayerState("playing");
 
-    speakQueue();
+    speakCurrentChunk();
   }
 
-  // ⏸ / ▶ CONTINUE — segue exatamente de onde parou
+  // ⏸ / ▶ CONTINUE — do ponto exato
   function pauseOrResume() {
     if (playerState === "playing") {
-      speechSynthesis.cancel(); // interrompe o bloco atual
+      speechSynthesis.cancel();
       setPlayerState("paused");
       return;
     }
 
     if (playerState === "paused") {
       setPlayerState("playing");
-      speakQueue(); // continua do índice salvo
+      speakCurrentChunk();
     }
   }
 
@@ -112,6 +127,7 @@ export default function App() {
     speechSynthesis.cancel();
     queueRef.current = [];
     queueIndexRef.current = 0;
+    chunkOffsetRef.current = 0;
     setPlayerState("idle");
   }
 
