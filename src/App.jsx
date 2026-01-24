@@ -40,7 +40,7 @@ export default function App() {
   }
 
   /* =========================
-     PLAYER — CORREÇÃO REAL
+     PLAYER — FIX REAL
   ========================== */
 
   function play(index) {
@@ -76,17 +76,28 @@ export default function App() {
   function pauseOrResume() {
     if (!utteranceRef.current) return;
 
+    // ⏸ PAUSE
     if (playerState === "playing") {
-      // ✅ PAUSE VERDADEIRO (sem cancelar)
       speechSynthesis.pause();
       setPlayerState("paused");
       return;
     }
 
+    // ▶ CONTINUE
     if (playerState === "paused") {
-      // ✅ CONTINUE VERDADEIRO
-      speechSynthesis.resume();
       setPlayerState("playing");
+
+      speechSynthesis.resume();
+
+      // 🔑 WORKAROUND DEFINITIVO DO CHROME
+      setTimeout(() => {
+        if (
+          utteranceRef.current &&
+          !speechSynthesis.speaking
+        ) {
+          speechSynthesis.speak(utteranceRef.current);
+        }
+      }, 0);
     }
   }
 
