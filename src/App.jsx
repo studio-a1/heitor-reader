@@ -60,7 +60,7 @@ export default function App() {
   }
 
   /* =========================
-     PLAYER — FINAL REAL
+     PLAYER — FINAL DEFINITIVO
   ========================== */
   function play(index) {
     speechSynthesis.cancel();
@@ -73,14 +73,11 @@ export default function App() {
     utterance.lang = "pt-BR";
     utterance.rate = 1;
 
-    // 🔑 VOZ EXPLÍCITA (DESKTOP NÃO FICA MUDO)
     const voice =
       voicesRef.current.find(v => v.lang === "pt-BR") ||
       voicesRef.current[0];
 
-    if (voice) {
-      utterance.voice = voice;
-    }
+    if (voice) utterance.voice = voice;
 
     utterance.onstart = () => {
       setActiveIndex(index);
@@ -104,15 +101,24 @@ export default function App() {
   function pauseOrResume() {
     if (!utteranceRef.current) return;
 
+    // ⏸ PAUSE REAL
     if (playerState === "playing") {
       speechSynthesis.pause();
       setPlayerState("paused");
       return;
     }
 
+    // ▶ CONTINUE REAL (DESKTOP + MOBILE)
     if (playerState === "paused") {
-      speechSynthesis.resume();
       setPlayerState("playing");
+
+      // Chrome Mobile precisa de insistência
+      speechSynthesis.resume();
+
+      setTimeout(() => {
+        // fallback APENAS resume — não recria, não reinicia
+        speechSynthesis.resume();
+      }, 120);
     }
   }
 
