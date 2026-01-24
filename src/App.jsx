@@ -9,10 +9,6 @@ export default function App() {
 
   const utteranceRef = useRef(null);
 
-  const isMobileChrome =
-    /Android/i.test(navigator.userAgent) &&
-    /Chrome/i.test(navigator.userAgent);
-
   /* =========================
      OCR
   ========================== */
@@ -44,7 +40,7 @@ export default function App() {
   }
 
   /* =========================
-     PLAYER
+     PLAYER — DEFINITIVO
   ========================== */
 
   function play(index) {
@@ -82,22 +78,18 @@ export default function App() {
 
     // ⏸ PAUSE
     if (playerState === "playing") {
-      speechSynthesis.pause();
-      setPlayerState("paused");
+      if (speechSynthesis.speaking) {
+        speechSynthesis.pause();
+        setPlayerState("paused");
+      }
       return;
     }
 
     // ▶ CONTINUE
     if (playerState === "paused") {
-      setPlayerState("playing");
-
-      if (isMobileChrome) {
-        // 🚑 Fallback mobile: recomeça do início
-        const index = activeIndex;
-        play(index);
-      } else {
-        // ✅ Desktop: retoma do ponto
+      if (speechSynthesis.paused) {
         speechSynthesis.resume();
+        setPlayerState("playing");
       }
     }
   }
