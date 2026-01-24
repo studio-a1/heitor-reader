@@ -8,6 +8,26 @@ export default function App() {
   // idle | playing | paused
 
   const utteranceRef = useRef(null);
+  const voicesRef = useRef([]);
+
+  /* =========================
+     LOAD VOICES (CRÍTICO)
+  ========================== */
+  useEffect(() => {
+    function loadVoices() {
+      const voices = speechSynthesis.getVoices();
+      if (voices.length) {
+        voicesRef.current = voices;
+      }
+    }
+
+    loadVoices();
+    speechSynthesis.onvoiceschanged = loadVoices;
+
+    return () => {
+      speechSynthesis.onvoiceschanged = null;
+    };
+  }, []);
 
   /* =========================
      OCR
@@ -42,10 +62,7 @@ export default function App() {
   /* =========================
      PLAYER — FINAL REAL
   ========================== */
-
   function play(index) {
-    // 🔑 REATIVA AUDIO CONTEXT NO DESKTOP
-    speechSynthesis.resume();
     speechSynthesis.cancel();
     utteranceRef.current = null;
 
@@ -55,6 +72,15 @@ export default function App() {
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "pt-BR";
     utterance.rate = 1;
+
+    // 🔑 VOZ EXPLÍCITA (DESKTOP NÃO FICA MUDO)
+    const voice =
+      voicesRef.current.find(v => v.lang === "pt-BR") ||
+      voicesRef.current[0];
+
+    if (voice) {
+      utterance.voice = voice;
+    }
 
     utterance.onstart = () => {
       setActiveIndex(index);
@@ -78,16 +104,13 @@ export default function App() {
   function pauseOrResume() {
     if (!utteranceRef.current) return;
 
-    // ⏸ PAUSE
     if (playerState === "playing") {
       speechSynthesis.pause();
       setPlayerState("paused");
       return;
     }
 
-    // ▶ CONTINUE
     if (playerState === "paused") {
-      // 🔑 REATIVA AUDIO CONTEXT
       speechSynthesis.resume();
       setPlayerState("playing");
     }
