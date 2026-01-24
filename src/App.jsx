@@ -5,10 +5,10 @@ export default function App() {
   const [activeIndex, setActiveIndex] = useState(null);
   const [loading, setLoading] = useState(false);
   const [playerState, setPlayerState] = useState("idle");
-  // idle | playing | paused
 
+  const queueRef = useRef([]);
+  const queueIndexRef = useRef(0);
   const utteranceRef = useRef(null);
-  const charIndexRef = useRef(0); // ← posição real da fala
 
   /* =========================
      OCR
@@ -32,55 +32,43 @@ export default function App() {
       if (data.text) {
         setTexts(prev => [...prev, data.text]);
         setActiveIndex(texts.length);
-      } else {
-        alert("Não foi possível ler a imagem.");
       }
-    } catch {
-      alert("Erro ao processar OCR.");
     } finally {
       setLoading(false);
     }
   }
 
   /* =========================
-     PLAYER (CORREÇÃO DEFINITIVA)
+     PLAYER ROBUSTO
   ========================== */
 
-  function speakFrom(index, startChar = 0) {
-    speechSynthesis.cancel();
-    utteranceRef.current = null;
+  function splitText(text, size = 180) {
+    const parts = [];
+    let i = 0;
+    while (i < text.length) {
+      parts.push(text.slice(i, i + size));
+      i += size;
+    }
+    return parts;
+  }
 
-    const text = texts[index];
-    if (!text) return;
+  function speakQueue(index) {
+    if (!queueRef.current.length) return;
 
-    const utterance = new SpeechSynthesisUtterance(
-      text.slice(startChar)
-    );
+    const chunk = queueRef.current[queueIndexRef.current];
+    if (!chunk) {
+      setPlayerState("idle");
+      return;
+    }
 
+    const utterance = new SpeechSynthesisUtterance(chunk);
     utterance.lang = "pt-BR";
-    utterance.rate = 1;
-    utterance.pitch = 1;
-
-    utterance.onstart = () => {
-      setPlayerState("playing");
-      setActiveIndex(index);
-    };
-
-    utterance.onboundary = e => {
-      if (e.name === "word") {
-        charIndexRef.current = startChar + e.charIndex;
-      }
-    };
 
     utterance.onend = () => {
-      setPlayerState("idle");
-      charIndexRef.current = 0;
-      utteranceRef.current = null;
-    };
-
-    utterance.onerror = () => {
-      setPlayerState("idle");
-      utteranceRef.current = null;
+      if (playerState === "playing") {
+        queueIndexRef.current += 1;
+        speakQueue(index);
+      }
     };
 
     utteranceRef.current = utterance;
@@ -88,33 +76,42 @@ export default function App() {
   }
 
   function play(index) {
-    charIndexRef.current = 0;
-    speakFrom(index, 0);
+    speechSynthesis.cancel();
+
+    const text = texts[index];
+    if (!text) return;
+
+    queueRef.current = splitText(text);
+    queueIndexRef.current = 0;
+
+    setActiveIndex(index);
+    setPlayerState("playing");
+
+    speakQueue(index);
   }
 
   function pauseOrResume() {
     if (playerState === "playing") {
-      speechSynthesis.cancel(); // pausa REAL
+      speechSynthesis.cancel();
       setPlayerState("paused");
       return;
     }
 
     if (playerState === "paused") {
-      speakFrom(activeIndex, charIndexRef.current);
+      setPlayerState("playing");
+      speakQueue(activeIndex);
     }
   }
 
   function stop() {
     speechSynthesis.cancel();
-    utteranceRef.current = null;
-    charIndexRef.current = 0;
+    queueRef.current = [];
+    queueIndexRef.current = 0;
     setPlayerState("idle");
   }
 
   useEffect(() => {
-    return () => {
-      speechSynthesis.cancel();
-    };
+    return () => speechSynthesis.cancel();
   }, []);
 
   /* =========================
@@ -131,7 +128,6 @@ export default function App() {
             <input
               type="file"
               accept="image/*"
-              capture="environment"
               hidden
               onChange={e => handleImageUpload(e.target.files[0])}
             />
@@ -146,20 +142,9 @@ export default function App() {
               onChange={e => handleImageUpload(e.target.files[0])}
             />
           </label>
-
-          <button
-            disabled
-            className="px-3 py-2 bg-neutral-600 rounded text-sm opacity-50"
-          >
-            📄 PDF
-          </button>
         </div>
 
-        {loading && (
-          <p className="text-center text-sm opacity-70 mb-3">
-            Processando OCR…
-          </p>
-        )}
+        {loading && <p className="text-center text-sm">Processando OCR…</p>}
 
         <div className="flex gap-3 overflow-x-auto">
           {texts.map((text, i) => (
@@ -169,7 +154,7 @@ export default function App() {
                 activeIndex === i ? "border-green-500" : "border-neutral-700"
               }`}
             >
-              <div className="flex justify-between items-center mb-2 text-sm">
+              <div className="flex justify-between mb-2 text-sm">
                 <span>Página {i + 1}</span>
 
                 <div className="flex gap-1">
@@ -206,4 +191,3 @@ export default function App() {
     </div>
   );
 }
-
