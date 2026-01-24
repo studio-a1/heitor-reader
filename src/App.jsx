@@ -40,7 +40,7 @@ export default function App() {
   }
 
   /* =========================
-     PLAYER — FIX DEFINITIVO
+     PLAYER — AGORA CORRETO
   ========================== */
 
   function play(index) {
@@ -76,21 +76,16 @@ export default function App() {
   function pauseOrResume() {
     if (!utteranceRef.current) return;
 
-    // ⏸ PAUSE REAL
+    // ⏸ PAUSE — mantém cursor interno
     if (playerState === "playing") {
       speechSynthesis.pause();
       setPlayerState("paused");
       return;
     }
 
-    // ▶ CONTINUE (reinicia do início — comportamento estável)
+    // ▶ CONTINUE — retoma DO PONTO
     if (playerState === "paused") {
-      speechSynthesis.cancel();
-
-      const utterance = utteranceRef.current;
-      utteranceRef.current = utterance;
-
-      speechSynthesis.speak(utterance);
+      speechSynthesis.resume();
       setPlayerState("playing");
     }
   }
