@@ -9,6 +9,10 @@ export default function App() {
 
   const utteranceRef = useRef(null);
 
+  const isMobileChrome =
+    /Android/i.test(navigator.userAgent) &&
+    /Chrome/i.test(navigator.userAgent);
+
   /* =========================
      OCR
   ========================== */
@@ -40,7 +44,7 @@ export default function App() {
   }
 
   /* =========================
-     PLAYER — AGORA CORRETO
+     PLAYER
   ========================== */
 
   function play(index) {
@@ -76,17 +80,25 @@ export default function App() {
   function pauseOrResume() {
     if (!utteranceRef.current) return;
 
-    // ⏸ PAUSE — mantém cursor interno
+    // ⏸ PAUSE
     if (playerState === "playing") {
       speechSynthesis.pause();
       setPlayerState("paused");
       return;
     }
 
-    // ▶ CONTINUE — retoma DO PONTO
+    // ▶ CONTINUE
     if (playerState === "paused") {
-      speechSynthesis.resume();
       setPlayerState("playing");
+
+      if (isMobileChrome) {
+        // 🚑 Fallback mobile: recomeça do início
+        const index = activeIndex;
+        play(index);
+      } else {
+        // ✅ Desktop: retoma do ponto
+        speechSynthesis.resume();
+      }
     }
   }
 
@@ -189,3 +201,4 @@ export default function App() {
     </div>
   );
 }
+
