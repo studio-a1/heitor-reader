@@ -7,9 +7,6 @@ export default function App() {
   const [playerState, setPlayerState] = useState("idle");
   // idle | playing | paused
 
-  const queueRef = useRef([]);
-  const queueIndexRef = useRef(0);
-  const chunkOffsetRef = useRef(0);
   const utteranceRef = useRef(null);
 
   /* =========================
@@ -43,91 +40,57 @@ export default function App() {
   }
 
   /* =========================
-     PLAYER (FINAL, SEM BUG)
+     PLAYER — CORRETO
   ========================== */
 
-  function splitText(text, size = 180) {
-    const parts = [];
-    let i = 0;
-    while (i < text.length) {
-      parts.push(text.slice(i, i + size));
-      i += size;
-    }
-    return parts;
-  }
+  function play(index) {
+    speechSynthesis.cancel();
+    utteranceRef.current = null;
 
-  function speakCurrentChunk() {
-    const chunk = queueRef.current[queueIndexRef.current];
-    if (!chunk) {
-      setPlayerState("idle");
-      return;
-    }
+    const text = texts[index];
+    if (!text) return;
 
-    const textToSpeak = chunk.slice(chunkOffsetRef.current);
-
-    const utterance = new SpeechSynthesisUtterance(textToSpeak);
+    const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "pt-BR";
     utterance.rate = 1;
 
-    utterance.onboundary = e => {
-      if (e.name === "word") {
-        chunkOffsetRef.current = e.charIndex;
-      }
+    utterance.onstart = () => {
+      setActiveIndex(index);
+      setPlayerState("playing");
     };
 
     utterance.onend = () => {
-      if (playerState === "playing") {
-        queueIndexRef.current += 1;
-        chunkOffsetRef.current = 0;
-        speakCurrentChunk();
-      }
+      setPlayerState("idle");
+      utteranceRef.current = null;
     };
 
     utterance.onerror = () => {
       setPlayerState("idle");
+      utteranceRef.current = null;
     };
 
     utteranceRef.current = utterance;
     speechSynthesis.speak(utterance);
   }
 
-  // ▶ PLAY — sempre do zero
-  function play(index) {
-    speechSynthesis.cancel();
-
-    const text = texts[index];
-    if (!text) return;
-
-    queueRef.current = splitText(text);
-    queueIndexRef.current = 0;
-    chunkOffsetRef.current = 0;
-
-    setActiveIndex(index);
-    setPlayerState("playing");
-
-    speakCurrentChunk();
-  }
-
-  // ⏸ / ▶ CONTINUE — do ponto exato
   function pauseOrResume() {
+    if (!utteranceRef.current) return;
+
     if (playerState === "playing") {
-      speechSynthesis.cancel();
+      speechSynthesis.pause(); // 🔑 NÃO cancelar
       setPlayerState("paused");
       return;
     }
 
     if (playerState === "paused") {
+      speechSynthesis.resume(); // 🔑 continua exatamente
       setPlayerState("playing");
-      speakCurrentChunk();
     }
   }
 
-  // ⏹ STOP — zera tudo
   function stop() {
     speechSynthesis.cancel();
-    queueRef.current = [];
-    queueIndexRef.current = 0;
-    chunkOffsetRef.current = 0;
+    utteranceRef.current = null;
     setPlayerState("idle");
   }
 
