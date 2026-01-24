@@ -40,10 +40,12 @@ export default function App() {
   }
 
   /* =========================
-     PLAYER — DEFINITIVO
+     PLAYER — FINAL REAL
   ========================== */
 
   function play(index) {
+    // 🔑 REATIVA AUDIO CONTEXT NO DESKTOP
+    speechSynthesis.resume();
     speechSynthesis.cancel();
     utteranceRef.current = null;
 
@@ -78,19 +80,16 @@ export default function App() {
 
     // ⏸ PAUSE
     if (playerState === "playing") {
-      if (speechSynthesis.speaking) {
-        speechSynthesis.pause();
-        setPlayerState("paused");
-      }
+      speechSynthesis.pause();
+      setPlayerState("paused");
       return;
     }
 
     // ▶ CONTINUE
     if (playerState === "paused") {
-      if (speechSynthesis.paused) {
-        speechSynthesis.resume();
-        setPlayerState("playing");
-      }
+      // 🔑 REATIVA AUDIO CONTEXT
+      speechSynthesis.resume();
+      setPlayerState("playing");
     }
   }
 
@@ -193,4 +192,3 @@ export default function App() {
     </div>
   );
 }
-
