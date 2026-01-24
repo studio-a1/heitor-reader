@@ -5,21 +5,18 @@ export default function App() {
   const [activeIndex, setActiveIndex] = useState(null);
   const [loading, setLoading] = useState(false);
   const [playerState, setPlayerState] = useState("idle");
-  // idle | playing | paused
 
   const utteranceRef = useRef(null);
   const voicesRef = useRef([]);
 
   /* =========================
-     LOAD VOICES (CRÍTICO)
+     LOAD VOICES
   ========================== */
   useEffect(() => {
-    function loadVoices() {
+    const loadVoices = () => {
       const voices = speechSynthesis.getVoices();
-      if (voices.length) {
-        voicesRef.current = voices;
-      }
-    }
+      if (voices.length) voicesRef.current = voices;
+    };
 
     loadVoices();
     speechSynthesis.onvoiceschanged = loadVoices;
@@ -34,7 +31,6 @@ export default function App() {
   ========================== */
   async function handleImageUpload(file) {
     if (!file) return;
-
     setLoading(true);
 
     const formData = new FormData();
@@ -47,7 +43,6 @@ export default function App() {
       });
 
       const data = await res.json();
-
       if (data.text) {
         setTexts(prev => [...prev, data.text]);
         setActiveIndex(texts.length);
@@ -60,7 +55,7 @@ export default function App() {
   }
 
   /* =========================
-     PLAYER — FINAL DEFINITIVO
+     PLAYER
   ========================== */
   function play(index) {
     speechSynthesis.cancel();
@@ -69,56 +64,65 @@ export default function App() {
     const text = texts[index];
     if (!text) return;
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "pt-BR";
-    utterance.rate = 1;
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "pt-BR";
+    u.rate = 1;
 
     const voice =
       voicesRef.current.find(v => v.lang === "pt-BR") ||
       voicesRef.current[0];
 
-    if (voice) utterance.voice = voice;
+    if (voice) u.voice = voice;
 
-    utterance.onstart = () => {
+    u.onstart = () => {
       setActiveIndex(index);
       setPlayerState("playing");
     };
 
-    utterance.onend = () => {
+    u.onend = () => {
       setPlayerState("idle");
       utteranceRef.current = null;
     };
 
-    utterance.onerror = () => {
+    u.onerror = () => {
       setPlayerState("idle");
       utteranceRef.current = null;
     };
 
-    utteranceRef.current = utterance;
-    speechSynthesis.speak(utterance);
+    utteranceRef.current = u;
+    speechSynthesis.speak(u);
   }
 
   function pauseOrResume() {
     if (!utteranceRef.current) return;
 
-    // ⏸ PAUSE REAL
+    // ⏸ PAUSE
     if (playerState === "playing") {
       speechSynthesis.pause();
       setPlayerState("paused");
       return;
     }
 
-    // ▶ CONTINUE REAL (DESKTOP + MOBILE)
+    // ▶ CONTINUE — MOBILE UNLOCK
     if (playerState === "paused") {
       setPlayerState("playing");
 
-      // Chrome Mobile precisa de insistência
       speechSynthesis.resume();
 
       setTimeout(() => {
-        // fallback APENAS resume — não recria, não reinicia
+        if (!utteranceRef.current) return;
+
+        // 🔓 KICK ACÚSTICO (Chrome Mobile)
+        utteranceRef.current.rate = 1.01;
         speechSynthesis.resume();
-      }, 120);
+
+        setTimeout(() => {
+          if (utteranceRef.current) {
+            utteranceRef.current.rate = 1;
+            speechSynthesis.resume();
+          }
+        }, 60);
+      }, 60);
     }
   }
 
