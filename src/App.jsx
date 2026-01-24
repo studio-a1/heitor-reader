@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
+const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
+
 export default function App() {
   const [texts, setTexts] = useState([]);
   const [activeIndex, setActiveIndex] = useState(null);
@@ -17,13 +19,9 @@ export default function App() {
       const voices = speechSynthesis.getVoices();
       if (voices.length) voicesRef.current = voices;
     };
-
     loadVoices();
     speechSynthesis.onvoiceschanged = loadVoices;
-
-    return () => {
-      speechSynthesis.onvoiceschanged = null;
-    };
+    return () => (speechSynthesis.onvoiceschanged = null);
   }, []);
 
   /* =========================
@@ -41,7 +39,6 @@ export default function App() {
         method: "POST",
         body: formData
       });
-
       const data = await res.json();
       if (data.text) {
         setTexts(prev => [...prev, data.text]);
@@ -71,7 +68,6 @@ export default function App() {
     const voice =
       voicesRef.current.find(v => v.lang === "pt-BR") ||
       voicesRef.current[0];
-
     if (voice) u.voice = voice;
 
     u.onstart = () => {
@@ -103,26 +99,21 @@ export default function App() {
       return;
     }
 
-    // ▶ CONTINUE — MOBILE UNLOCK
+    // ▶ CONTINUE
     if (playerState === "paused") {
-      setPlayerState("playing");
+      // 📱 MOBILE → reinicia do início (única forma confiável)
+      if (isMobile) {
+        const idx = activeIndex;
+        setPlayerState("idle");
+        speechSynthesis.cancel();
+        utteranceRef.current = null;
+        setTimeout(() => play(idx), 50);
+        return;
+      }
 
+      // 🖥 DESKTOP → resume real
       speechSynthesis.resume();
-
-      setTimeout(() => {
-        if (!utteranceRef.current) return;
-
-        // 🔓 KICK ACÚSTICO (Chrome Mobile)
-        utteranceRef.current.rate = 1.01;
-        speechSynthesis.resume();
-
-        setTimeout(() => {
-          if (utteranceRef.current) {
-            utteranceRef.current.rate = 1;
-            speechSynthesis.resume();
-          }
-        }, 60);
-      }, 60);
+      setPlayerState("playing");
     }
   }
 
@@ -166,10 +157,7 @@ export default function App() {
             />
           </label>
 
-          <button
-            disabled
-            className="px-3 py-2 bg-neutral-600 rounded text-sm opacity-50"
-          >
+          <button disabled className="px-3 py-2 bg-neutral-600 rounded text-sm opacity-50">
             📄 PDF
           </button>
         </div>
