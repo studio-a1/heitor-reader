@@ -8,7 +8,6 @@ export default function App() {
   // idle | playing | paused
 
   const utteranceRef = useRef(null);
-  const charIndexRef = useRef(0);
 
   /* =========================
      OCR
@@ -41,11 +40,17 @@ export default function App() {
   }
 
   /* =========================
-     PLAYER
+     PLAYER — CORREÇÃO REAL
   ========================== */
 
-  function createUtterance(text, index, startAt = 0) {
-    const utterance = new SpeechSynthesisUtterance(text.slice(startAt));
+  function play(index) {
+    speechSynthesis.cancel();
+    utteranceRef.current = null;
+
+    const text = texts[index];
+    if (!text) return;
+
+    const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "pt-BR";
     utterance.rate = 1;
 
@@ -54,16 +59,9 @@ export default function App() {
       setPlayerState("playing");
     };
 
-    utterance.onboundary = e => {
-      if (e.charIndex !== undefined) {
-        charIndexRef.current = startAt + e.charIndex;
-      }
-    };
-
     utterance.onend = () => {
       setPlayerState("idle");
       utteranceRef.current = null;
-      charIndexRef.current = 0;
     };
 
     utterance.onerror = () => {
@@ -71,17 +69,6 @@ export default function App() {
       utteranceRef.current = null;
     };
 
-    return utterance;
-  }
-
-  function play(index) {
-    speechSynthesis.cancel();
-    charIndexRef.current = 0;
-
-    const text = texts[index];
-    if (!text) return;
-
-    const utterance = createUtterance(text, index, 0);
     utteranceRef.current = utterance;
     speechSynthesis.speak(utterance);
   }
@@ -90,34 +77,22 @@ export default function App() {
     if (!utteranceRef.current) return;
 
     if (playerState === "playing") {
-      // 🔑 PAUSE REAL + ESTADO VISUAL
+      // ✅ PAUSE VERDADEIRO (sem cancelar)
+      speechSynthesis.pause();
       setPlayerState("paused");
-      speechSynthesis.cancel();
       return;
     }
 
     if (playerState === "paused") {
-      const text = texts[activeIndex];
-      if (!text) return;
-
-      // 🔑 CONTINUE REAL + ESTADO VISUAL
+      // ✅ CONTINUE VERDADEIRO
+      speechSynthesis.resume();
       setPlayerState("playing");
-
-      const utterance = createUtterance(
-        text,
-        activeIndex,
-        charIndexRef.current
-      );
-
-      utteranceRef.current = utterance;
-      speechSynthesis.speak(utterance);
     }
   }
 
   function stop() {
     speechSynthesis.cancel();
     utteranceRef.current = null;
-    charIndexRef.current = 0;
     setPlayerState("idle");
   }
 
