@@ -41,7 +41,7 @@ export default function App() {
   }
 
   /* =========================
-     PLAYER — FIX DEFINITIVO
+     PLAYER
   ========================== */
 
   function createUtterance(text, index, startAt = 0) {
@@ -55,7 +55,7 @@ export default function App() {
     };
 
     utterance.onboundary = e => {
-      if (e.name === "word" || e.charIndex !== undefined) {
+      if (e.charIndex !== undefined) {
         charIndexRef.current = startAt + e.charIndex;
       }
     };
@@ -76,7 +76,6 @@ export default function App() {
 
   function play(index) {
     speechSynthesis.cancel();
-    utteranceRef.current = null;
     charIndexRef.current = 0;
 
     const text = texts[index];
@@ -91,14 +90,18 @@ export default function App() {
     if (!utteranceRef.current) return;
 
     if (playerState === "playing") {
-      speechSynthesis.cancel(); // pausa real
+      // 🔑 PAUSE REAL + ESTADO VISUAL
       setPlayerState("paused");
+      speechSynthesis.cancel();
       return;
     }
 
     if (playerState === "paused") {
       const text = texts[activeIndex];
       if (!text) return;
+
+      // 🔑 CONTINUE REAL + ESTADO VISUAL
+      setPlayerState("playing");
 
       const utterance = createUtterance(
         text,
