@@ -40,7 +40,7 @@ export default function App() {
   }
 
   /* =========================
-     PLAYER — CORRETO
+     PLAYER — FIX FINAL
   ========================== */
 
   function play(index) {
@@ -77,13 +77,15 @@ export default function App() {
     if (!utteranceRef.current) return;
 
     if (playerState === "playing") {
-      speechSynthesis.pause(); // 🔑 NÃO cancelar
+      speechSynthesis.pause();
       setPlayerState("paused");
       return;
     }
 
     if (playerState === "paused") {
-      speechSynthesis.resume(); // 🔑 continua exatamente
+      // 🔑 FIX REAL DO CHROME
+      speechSynthesis.resume();
+      speechSynthesis.speak(utteranceRef.current); // continua do ponto exato
       setPlayerState("playing");
     }
   }
