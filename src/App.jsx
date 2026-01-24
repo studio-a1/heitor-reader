@@ -40,7 +40,7 @@ export default function App() {
   }
 
   /* =========================
-     PLAYER — FIX REAL
+     PLAYER — FIX DEFINITIVO
   ========================== */
 
   function play(index) {
@@ -76,28 +76,22 @@ export default function App() {
   function pauseOrResume() {
     if (!utteranceRef.current) return;
 
-    // ⏸ PAUSE
+    // ⏸ PAUSE REAL
     if (playerState === "playing") {
       speechSynthesis.pause();
       setPlayerState("paused");
       return;
     }
 
-    // ▶ CONTINUE
+    // ▶ CONTINUE (reinicia do início — comportamento estável)
     if (playerState === "paused") {
+      speechSynthesis.cancel();
+
+      const utterance = utteranceRef.current;
+      utteranceRef.current = utterance;
+
+      speechSynthesis.speak(utterance);
       setPlayerState("playing");
-
-      speechSynthesis.resume();
-
-      // 🔑 WORKAROUND DEFINITIVO DO CHROME
-      setTimeout(() => {
-        if (
-          utteranceRef.current &&
-          !speechSynthesis.speaking
-        ) {
-          speechSynthesis.speak(utteranceRef.current);
-        }
-      }, 0);
     }
   }
 
@@ -119,7 +113,6 @@ export default function App() {
       <div className="w-full max-w-4xl bg-neutral-800 rounded-2xl p-4">
         <h1 className="text-center text-xl mb-4">Heitor Reader</h1>
 
-        {/* BOTÕES INICIAIS */}
         <div className="flex gap-2 justify-center mb-4">
           <label className="px-3 py-2 bg-blue-600 rounded cursor-pointer text-sm">
             📷 Scanner
@@ -156,7 +149,6 @@ export default function App() {
           </p>
         )}
 
-        {/* CARDS */}
         <div className="flex gap-3 overflow-x-auto">
           {texts.map((text, i) => (
             <div
