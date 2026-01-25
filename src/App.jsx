@@ -24,7 +24,10 @@ export default function App() {
 
     loadVoices();
     speechSynthesis.onvoiceschanged = loadVoices;
-    return () => (speechSynthesis.onvoiceschanged = null);
+
+    return () => {
+      speechSynthesis.onvoiceschanged = null;
+    };
   }, []);
 
   /* =========================
@@ -32,8 +35,8 @@ export default function App() {
   ========================== */
   async function handleImageUpload(file) {
     if (!file) return;
-    setLoading(true);
 
+    setLoading(true);
     const formData = new FormData();
     formData.append("image", file);
 
@@ -42,7 +45,9 @@ export default function App() {
         method: "POST",
         body: formData
       });
+
       const data = await res.json();
+
       if (data.text) {
         setTexts(prev => [...prev, data.text]);
         setActiveIndex(texts.length);
@@ -57,15 +62,15 @@ export default function App() {
   /* =========================
      PLAYER
   ========================== */
-  function play(index) {
+  function play(index, startChar = 0) {
     speechSynthesis.cancel();
     utteranceRef.current = null;
-    charIndexRef.current = 0;
+    charIndexRef.current = startChar;
 
     const text = texts[index];
     if (!text) return;
 
-    const utterance = new SpeechSynthesisUtterance(text);
+    const utterance = new SpeechSynthesisUtterance(text.slice(startChar));
     utterance.lang = "pt-BR";
     utterance.rate = 1;
 
@@ -77,7 +82,7 @@ export default function App() {
 
     utterance.onboundary = e => {
       if (typeof e.charIndex === "number") {
-        charIndexRef.current = e.charIndex;
+        charIndexRef.current = startChar + e.charIndex;
       }
     };
 
@@ -89,7 +94,6 @@ export default function App() {
     utterance.onend = () => {
       setPlayerState("idle");
       utteranceRef.current = null;
-      charIndexRef.current = 0;
     };
 
     utterance.onerror = () => {
@@ -104,65 +108,24 @@ export default function App() {
   function pauseOrResume() {
     if (!utteranceRef.current) return;
 
-    // ⏸ PAUSE
     if (playerState === "playing") {
       speechSynthesis.pause();
       setPlayerState("paused");
       return;
     }
 
-    // ▶ CONTINUE
-    if (playerState === "paused") {
-      // 📱 MOBILE — recria utterance e DISPARA SOM NO CLIQUE
-      if (isMobile) {
-        const fullText = texts[activeIndex];
-        if (!fullText) return;
-
-        const rewindChars = 120;
-        const start = Math.max(0, charIndexRef.current - rewindChars);
-        const resumedText = fullText.slice(start);
-
-        speechSynthesis.cancel();
-        utteranceRef.current = null;
-
-        const utterance = new SpeechSynthesisUtterance(resumedText);
-        utterance.lang = "pt-BR";
-        utterance.rate = 1;
-
-        const voice =
-          voicesRef.current.find(v => v.lang === "pt-BR") ||
-          voicesRef.current[0];
-
-        if (voice) utterance.voice = voice;
-
-        utterance.onboundary = e => {
-          if (typeof e.charIndex === "number") {
-            charIndexRef.current = start + e.charIndex;
-          }
-        };
-
-        utterance.onend = () => {
-          setPlayerState("idle");
-          utteranceRef.current = null;
-        };
-
-        utterance.onerror = () => {
-          setPlayerState("idle");
-          utteranceRef.current = null;
-        };
-
-        utteranceRef.current = utterance;
-        speechSynthesis.speak(utterance);
-
-        // 🔑 estado gráfico DEPOIS do speak (mobile-safe)
-        setPlayerState("playing");
-        return;
-      }
-
-      // 🖥 DESKTOP — intocado
+    if (playerState === "paused" && !isMobile) {
       speechSynthesis.resume();
       setPlayerState("playing");
     }
+  }
+
+  function rewind() {
+    if (activeIndex === null) return;
+
+    const rewindChars = 120;
+    const start = Math.max(0, charIndexRef.current - rewindChars);
+    play(activeIndex, start);
   }
 
   function stop() {
@@ -239,12 +202,23 @@ export default function App() {
                     ▶
                   </button>
 
-                  <button
-                    onClick={pauseOrResume}
-                    className="px-2 py-1 bg-blue-600 rounded text-xs"
-                  >
-                    {playerState === "paused" ? "▶" : "⏸"}
-                  </button>
+                  {!isMobile && (
+                    <button
+                      onClick={pauseOrResume}
+                      className="px-2 py-1 bg-blue-600 rounded text-xs"
+                    >
+                      {playerState === "paused" ? "▶" : "⏸"}
+                    </button>
+                  )}
+
+                  {isMobile && (
+                    <button
+                      onClick={rewind}
+                      className="px-2 py-1 bg-yellow-600 rounded text-xs"
+                    >
+                      ⏪
+                    </button>
+                  )}
 
                   <button
                     onClick={stop}
