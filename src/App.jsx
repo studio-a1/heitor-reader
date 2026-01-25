@@ -7,21 +7,29 @@ export default function App() {
   const [activeIndex, setActiveIndex] = useState(null);
   const [loading, setLoading] = useState(false);
   const [playerState, setPlayerState] = useState("idle");
+  // idle | playing | paused
 
   const utteranceRef = useRef(null);
   const voicesRef = useRef([]);
+  const charIndexRef = useRef(0); // 🔑 progresso lógico do texto
 
   /* =========================
      LOAD VOICES
   ========================== */
   useEffect(() => {
-    const loadVoices = () => {
+    function loadVoices() {
       const voices = speechSynthesis.getVoices();
-      if (voices.length) voicesRef.current = voices;
-    };
+      if (voices.length) {
+        voicesRef.current = voices;
+      }
+    }
+
     loadVoices();
     speechSynthesis.onvoiceschanged = loadVoices;
-    return () => (speechSynthesis.onvoiceschanged = null);
+
+    return () => {
+      speechSynthesis.onvoiceschanged = null;
+    };
   }, []);
 
   /* =========================
@@ -29,6 +37,7 @@ export default function App() {
   ========================== */
   async function handleImageUpload(file) {
     if (!file) return;
+
     setLoading(true);
 
     const formData = new FormData();
@@ -39,7 +48,9 @@ export default function App() {
         method: "POST",
         body: formData
       });
+
       const data = await res.json();
+
       if (data.text) {
         setTexts(prev => [...prev, data.text]);
         setActiveIndex(texts.length);
@@ -57,42 +68,51 @@ export default function App() {
   function play(index) {
     speechSynthesis.cancel();
     utteranceRef.current = null;
+    charIndexRef.current = 0;
 
     const text = texts[index];
     if (!text) return;
 
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = "pt-BR";
-    u.rate = 1;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "pt-BR";
+    utterance.rate = 1;
 
     const voice =
       voicesRef.current.find(v => v.lang === "pt-BR") ||
       voicesRef.current[0];
-    if (voice) u.voice = voice;
 
-    u.onstart = () => {
+    if (voice) utterance.voice = voice;
+
+    utterance.onboundary = e => {
+      if (typeof e.charIndex === "number") {
+        charIndexRef.current = e.charIndex;
+      }
+    };
+
+    utterance.onstart = () => {
       setActiveIndex(index);
       setPlayerState("playing");
     };
 
-    u.onend = () => {
+    utterance.onend = () => {
+      setPlayerState("idle");
+      utteranceRef.current = null;
+      charIndexRef.current = 0;
+    };
+
+    utterance.onerror = () => {
       setPlayerState("idle");
       utteranceRef.current = null;
     };
 
-    u.onerror = () => {
-      setPlayerState("idle");
-      utteranceRef.current = null;
-    };
-
-    utteranceRef.current = u;
-    speechSynthesis.speak(u);
+    utteranceRef.current = utterance;
+    speechSynthesis.speak(utterance);
   }
 
   function pauseOrResume() {
     if (!utteranceRef.current) return;
 
-    // ⏸ PAUSE
+    // ⏸ PAUSE (desktop + mobile)
     if (playerState === "playing") {
       speechSynthesis.pause();
       setPlayerState("paused");
@@ -101,17 +121,54 @@ export default function App() {
 
     // ▶ CONTINUE
     if (playerState === "paused") {
-      // 📱 MOBILE → reinicia do início (única forma confiável)
+      // 📱 MOBILE → retoma por trecho de texto
       if (isMobile) {
-        const idx = activeIndex;
-        setPlayerState("idle");
+        const fullText = texts[activeIndex];
+        if (!fullText) return;
+
+        const rewindChars = 120; // ~1 frase
+        const start = Math.max(0, charIndexRef.current - rewindChars);
+        const resumedText = fullText.slice(start);
+
         speechSynthesis.cancel();
         utteranceRef.current = null;
-        setTimeout(() => play(idx), 50);
+
+        const utterance = new SpeechSynthesisUtterance(resumedText);
+        utterance.lang = "pt-BR";
+        utterance.rate = 1;
+
+        const voice =
+          voicesRef.current.find(v => v.lang === "pt-BR") ||
+          voicesRef.current[0];
+
+        if (voice) utterance.voice = voice;
+
+        utterance.onboundary = e => {
+          if (typeof e.charIndex === "number") {
+            charIndexRef.current = start + e.charIndex;
+          }
+        };
+
+        utterance.onstart = () => {
+          setPlayerState("playing");
+        };
+
+        utterance.onend = () => {
+          setPlayerState("idle");
+          utteranceRef.current = null;
+        };
+
+        utterance.onerror = () => {
+          setPlayerState("idle");
+          utteranceRef.current = null;
+        };
+
+        utteranceRef.current = utterance;
+        speechSynthesis.speak(utterance);
         return;
       }
 
-      // 🖥 DESKTOP → resume real
+      // 🖥 DESKTOP → resume nativo (INALTERADO)
       speechSynthesis.resume();
       setPlayerState("playing");
     }
@@ -120,6 +177,7 @@ export default function App() {
   function stop() {
     speechSynthesis.cancel();
     utteranceRef.current = null;
+    charIndexRef.current = 0;
     setPlayerState("idle");
   }
 
@@ -157,7 +215,10 @@ export default function App() {
             />
           </label>
 
-          <button disabled className="px-3 py-2 bg-neutral-600 rounded text-sm opacity-50">
+          <button
+            disabled
+            className="px-3 py-2 bg-neutral-600 rounded text-sm opacity-50"
+          >
             📄 PDF
           </button>
         </div>
