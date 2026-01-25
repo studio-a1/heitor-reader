@@ -6,15 +6,13 @@ export default function App() {
   const [texts, setTexts] = useState([]);
   const [activeIndex, setActiveIndex] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [playerState, setPlayerState] = useState("idle"); // idle | playing | paused
-  const [showFirstPlayHint, setShowFirstPlayHint] = useState(false);
-  const [assistMode, setAssistMode] = useState(
-    () => localStorage.getItem("assistMode") === "true"
-  );
+  const [playerState, setPlayerState] = useState("idle");
+  const [hasPlayedOnce, setHasPlayedOnce] = useState(false);
+  const [preparing, setPreparing] = useState(false);
+  // idle | playing | paused
 
   const utteranceRef = useRef(null);
   const voicesRef = useRef([]);
-  const hasStartedRef = useRef(false);
 
   // MOBILE ONLY
   const blocksRef = useRef([]);
@@ -28,13 +26,9 @@ export default function App() {
       const voices = speechSynthesis.getVoices();
       if (voices.length) voicesRef.current = voices;
     }
-
     loadVoices();
     speechSynthesis.onvoiceschanged = loadVoices;
-
-    return () => {
-      speechSynthesis.onvoiceschanged = null;
-    };
+    return () => (speechSynthesis.onvoiceschanged = null);
   }, []);
 
   /* =========================
@@ -42,7 +36,6 @@ export default function App() {
   ========================== */
   async function handleImageUpload(file) {
     if (!file) return;
-
     setLoading(true);
 
     const formData = new FormData();
@@ -53,9 +46,7 @@ export default function App() {
         method: "POST",
         body: formData
       });
-
       const data = await res.json();
-
       if (data.text) {
         setTexts(prev => [...prev, data.text]);
         setActiveIndex(texts.length);
@@ -84,26 +75,20 @@ export default function App() {
     const voice =
       voicesRef.current.find(v => v.lang === "pt-BR") ||
       voicesRef.current[0];
-
     if (voice) u.voice = voice;
 
     u.onstart = () => {
-      if (hasStartedRef.current) return;
-      hasStartedRef.current = true;
-
+      setPreparing(false);
       setPlayerState("playing");
-      setShowFirstPlayHint(false);
-      localStorage.setItem("hasPlayedOnce", "true");
+      setHasPlayedOnce(true);
     };
 
     u.onend = () => {
       blockIndexRef.current++;
-
       if (blockIndexRef.current < blocksRef.current.length) {
         speakBlock(blockIndexRef.current);
       } else {
         setPlayerState("idle");
-        hasStartedRef.current = false;
       }
     };
 
@@ -115,18 +100,16 @@ export default function App() {
      PLAYER
   ========================== */
   function play(index) {
+    if (navigator.vibrate) navigator.vibrate(10);
+
     speechSynthesis.cancel();
     utteranceRef.current = null;
-    hasStartedRef.current = false;
-
     setActiveIndex(index);
 
     const text = texts[index];
     if (!text) return;
 
-    if (!localStorage.getItem("hasPlayedOnce")) {
-      setShowFirstPlayHint(true);
-    }
+    setPreparing(true);
 
     if (isMobile) {
       blocksRef.current = splitIntoBlocks(text);
@@ -141,27 +124,16 @@ export default function App() {
     const voice =
       voicesRef.current.find(v => v.lang === "pt-BR") ||
       voicesRef.current[0];
-
     if (voice) u.voice = voice;
 
     u.onstart = () => {
-      if (hasStartedRef.current) return;
-      hasStartedRef.current = true;
-
+      setPreparing(false);
       setPlayerState("playing");
-      setShowFirstPlayHint(false);
-      localStorage.setItem("hasPlayedOnce", "true");
+      setHasPlayedOnce(true);
     };
 
-    u.onend = () => {
-      setPlayerState("idle");
-      hasStartedRef.current = false;
-    };
-
-    u.onerror = () => {
-      setPlayerState("idle");
-      hasStartedRef.current = false;
-    };
+    u.onend = () => setPlayerState("idle");
+    u.onerror = () => setPlayerState("idle");
 
     utteranceRef.current = u;
     speechSynthesis.speak(u);
@@ -184,9 +156,7 @@ export default function App() {
 
   function rewind() {
     if (!isMobile) return;
-
-    blockIndexRef.current = Math.max(0, blockIndexRef.current - 1);
-    hasStartedRef.current = false;
+    blockIndexRef.current = Math.max(0, blockIndexRef.current - 2);
     speakBlock(blockIndexRef.current);
   }
 
@@ -194,8 +164,8 @@ export default function App() {
     speechSynthesis.cancel();
     utteranceRef.current = null;
     blockIndexRef.current = 0;
-    hasStartedRef.current = false;
     setPlayerState("idle");
+    setPreparing(false);
   }
 
   useEffect(() => {
@@ -206,31 +176,13 @@ export default function App() {
      UI
   ========================== */
   return (
-    <div
-      className={`min-h-screen bg-neutral-900 text-neutral-200 flex justify-center p-4 ${
-        assistMode ? "text-base leading-relaxed" : "text-sm"
-      }`}
-    >
-      <div className="w-full max-w-4xl bg-neutral-800 rounded-2xl p-4">
-        {/* HEADER */}
-        <div className="flex justify-between items-center mb-3">
-          <h1 className="text-xl">Heitor Reader</h1>
+    <div className="min-h-screen bg-neutral-900 text-neutral-200 flex justify-center p-4">
+      <div className="w-full max-w-5xl bg-neutral-800 rounded-2xl p-4">
+        <h1 className="text-center text-xl mb-4">Heitor Reader</h1>
 
-          <button
-            onClick={() => {
-              const next = !assistMode;
-              setAssistMode(next);
-              localStorage.setItem("assistMode", next);
-            }}
-            className="text-xs px-3 py-1 rounded bg-neutral-700 hover:bg-neutral-600"
-          >
-            ♿ Leitura Assistida
-          </button>
-        </div>
-
-        {/* BOTÕES INICIAIS */}
-        <div className="flex gap-2 justify-center mb-3">
-          <label className="px-3 py-2 bg-blue-600 rounded cursor-pointer">
+        {/* BOTÕES DE UPLOAD */}
+        <div className="flex gap-2 justify-center mb-4">
+          <label className="px-4 py-2 bg-blue-600 rounded cursor-pointer text-sm focus:ring-2">
             📷 Scanner
             <input
               type="file"
@@ -241,7 +193,7 @@ export default function App() {
             />
           </label>
 
-          <label className="px-3 py-2 bg-indigo-600 rounded cursor-pointer">
+          <label className="px-4 py-2 bg-indigo-600 rounded cursor-pointer text-sm focus:ring-2">
             🖼 Imagem
             <input
               type="file"
@@ -253,58 +205,56 @@ export default function App() {
 
           <button
             disabled
-            className="px-3 py-2 bg-neutral-600 rounded opacity-50"
+            className="px-4 py-2 bg-neutral-600 rounded text-sm opacity-50"
           >
             📄 PDF
           </button>
         </div>
 
-        {/* MENSAGEM PRIMEIRA LEITURA */}
-        {showFirstPlayHint && (
-          <div
-            role="status"
-            aria-live="polite"
-            className="mb-3 p-3 rounded bg-neutral-700 text-center"
-          >
-            <strong className="block">Preparando a leitura…</strong>
-            <span className="opacity-80">
-              a primeira vez pode levar alguns segundos
-            </span>
-          </div>
+        {/* STATUS */}
+        {loading && (
+          <p className="text-center text-sm opacity-70 mb-3">
+            Processando OCR…
+          </p>
         )}
 
-        {/* LOADING OCR */}
-        {loading && (
-          <p className="text-center opacity-70 mb-3">
-            Lendo a página…
+        {preparing && (
+          <p className="text-center text-sm text-yellow-400 mb-3">
+            Preparando leitura…
+          </p>
+        )}
+
+        {!hasPlayedOnce && texts.length > 0 && !preparing && (
+          <p className="text-center text-sm opacity-70 mb-3">
+            ▶ Clique em ouvir. A primeira leitura pode levar alguns segundos.
           </p>
         )}
 
         {/* CARDS */}
-        <div className="flex gap-3 overflow-x-auto">
+        <div className="flex gap-4 overflow-x-auto pb-2">
           {texts.map((text, i) => (
             <div
               key={i}
-              className={`min-w-[260px] bg-neutral-900 rounded-xl p-3 border-2 ${
-                activeIndex === i
-                  ? "border-green-500"
-                  : "border-neutral-700"
+              className={`min-w-[300px] bg-neutral-900 rounded-xl p-3 border-2 ${
+                activeIndex === i ? "border-green-500" : "border-neutral-700"
               }`}
             >
-              <div className="flex justify-between items-center mb-2">
+              <div className="flex justify-between items-center mb-2 text-sm">
                 <span>Página {i + 1}</span>
 
                 <div className="flex gap-1">
                   <button
                     onClick={() => play(i)}
-                    className="px-2 py-1 bg-green-600 rounded text-xs"
+                    className="px-3 py-2 bg-green-600 rounded cursor-pointer focus:ring-2"
+                    title="Ouvir"
                   >
                     ▶
                   </button>
 
                   <button
                     onClick={pauseOrResume}
-                    className="px-2 py-1 bg-blue-600 rounded text-xs"
+                    className="px-3 py-2 bg-blue-600 rounded cursor-pointer focus:ring-2"
+                    title="Pausar / Retomar"
                   >
                     {playerState === "paused" ? "▶" : "⏸"}
                   </button>
@@ -312,7 +262,8 @@ export default function App() {
                   {isMobile && (
                     <button
                       onClick={rewind}
-                      className="px-2 py-1 bg-yellow-600 rounded text-xs"
+                      className="px-3 py-2 bg-yellow-600 rounded cursor-pointer focus:ring-2"
+                      title="Voltar um pouco"
                     >
                       ↺
                     </button>
@@ -320,14 +271,15 @@ export default function App() {
 
                   <button
                     onClick={stop}
-                    className="px-2 py-1 bg-red-600 rounded text-xs"
+                    className="px-3 py-2 bg-red-600 rounded cursor-pointer focus:ring-2"
+                    title="Parar"
                   >
                     ⏹
                   </button>
                 </div>
               </div>
 
-              <div className="max-h-40 overflow-y-auto whitespace-pre-wrap">
+              <div className="text-sm max-h-48 overflow-y-auto whitespace-pre-wrap">
                 {text}
               </div>
             </div>
