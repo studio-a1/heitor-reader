@@ -11,7 +11,7 @@ export default function App() {
 
   const utteranceRef = useRef(null);
   const voicesRef = useRef([]);
-  const charIndexRef = useRef(0); // 🔑 progresso lógico do texto
+  const charIndexRef = useRef(0);
 
   /* =========================
      LOAD VOICES
@@ -19,17 +19,12 @@ export default function App() {
   useEffect(() => {
     function loadVoices() {
       const voices = speechSynthesis.getVoices();
-      if (voices.length) {
-        voicesRef.current = voices;
-      }
+      if (voices.length) voicesRef.current = voices;
     }
 
     loadVoices();
     speechSynthesis.onvoiceschanged = loadVoices;
-
-    return () => {
-      speechSynthesis.onvoiceschanged = null;
-    };
+    return () => (speechSynthesis.onvoiceschanged = null);
   }, []);
 
   /* =========================
@@ -37,7 +32,6 @@ export default function App() {
   ========================== */
   async function handleImageUpload(file) {
     if (!file) return;
-
     setLoading(true);
 
     const formData = new FormData();
@@ -48,9 +42,7 @@ export default function App() {
         method: "POST",
         body: formData
       });
-
       const data = await res.json();
-
       if (data.text) {
         setTexts(prev => [...prev, data.text]);
         setActiveIndex(texts.length);
@@ -112,7 +104,7 @@ export default function App() {
   function pauseOrResume() {
     if (!utteranceRef.current) return;
 
-    // ⏸ PAUSE (desktop + mobile)
+    // ⏸ PAUSE
     if (playerState === "playing") {
       speechSynthesis.pause();
       setPlayerState("paused");
@@ -121,12 +113,12 @@ export default function App() {
 
     // ▶ CONTINUE
     if (playerState === "paused") {
-      // 📱 MOBILE → retoma por trecho de texto
+      // 📱 MOBILE — recria utterance e DISPARA SOM NO CLIQUE
       if (isMobile) {
         const fullText = texts[activeIndex];
         if (!fullText) return;
 
-        const rewindChars = 120; // ~1 frase
+        const rewindChars = 120;
         const start = Math.max(0, charIndexRef.current - rewindChars);
         const resumedText = fullText.slice(start);
 
@@ -149,10 +141,6 @@ export default function App() {
           }
         };
 
-        utterance.onstart = () => {
-          setPlayerState("playing");
-        };
-
         utterance.onend = () => {
           setPlayerState("idle");
           utteranceRef.current = null;
@@ -165,10 +153,13 @@ export default function App() {
 
         utteranceRef.current = utterance;
         speechSynthesis.speak(utterance);
+
+        // 🔑 estado gráfico DEPOIS do speak (mobile-safe)
+        setPlayerState("playing");
         return;
       }
 
-      // 🖥 DESKTOP → resume nativo (INALTERADO)
+      // 🖥 DESKTOP — intocado
       speechSynthesis.resume();
       setPlayerState("playing");
     }
