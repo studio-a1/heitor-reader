@@ -12,15 +12,26 @@
     "packageJson": {
       "dependencies": [
         "npm:@eslint/js@^9.39.1",
+        "npm:@heroicons/react@^2.2.0",
+        "npm:@tailwindcss/postcss@^4.1.18",
         "npm:@types/react-dom@^19.2.3",
-        "npm:@types/react@^19.2.5",
+        "npm:@types/react@^19.2.10",
         "npm:@vitejs/plugin-react@^5.1.1",
+        "npm:autoprefixer@^10.4.23",
+        "npm:busboy@^1.6.0",
         "npm:eslint-plugin-react-hooks@^7.0.1",
         "npm:eslint-plugin-react-refresh@~0.4.24",
         "npm:eslint@^9.39.1",
         "npm:globals@^16.5.0",
+        "npm:heroicons@^2.2.0",
+        "npm:lucide-react@0.563",
+        "npm:openai@^6.16.0",
+        "npm:pdfjs-dist@^5.4.530",
+        "npm:postcss@^8.5.6",
         "npm:react-dom@^19.2.0",
         "npm:react@^19.2.0",
+        "npm:tailwindcss@^3.4.17",
+        "npm:typescript@^5.9.3",
         "npm:vite@^7.2.4"
       ]
     }
