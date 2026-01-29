@@ -1,83 +1,81 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  PlayIcon,
+  PauseIcon,
+  StopIcon,
+  ArrowDownTrayIcon,
+  PhotoIcon,
+  CameraIcon,
+  DocumentTextIcon,
+  ArrowRightOnRectangleIcon,
+} from "@heroicons/react/24/solid";
 
-const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// mock de plano
-const plan = "free"; // free | freemium | premium
-
-const PLAN_LIMITS = {
-  free: { pages: 3, pdfs: 0 },
-  freemium: { pages: 10, pdfs: 5 },
-  premium: { pages: Infinity, pdfs: Infinity },
-};
-
 export default function App() {
+  const plan = "free"; // free | freemium | premium
+
+  const limits = {
+    free: { pages: 3, pdfs: 0, download: false },
+    freemium: { pages: 10, pdfs: 5, download: true },
+    premium: { pages: Infinity, pdfs: Infinity, download: true },
+  };
+
   const [texts, setTexts] = useState([]);
   const [activeIndex, setActiveIndex] = useState(null);
-  const [loading, setLoading] = useState(false);
   const [playerState, setPlayerState] = useState("idle");
-  const [preparing, setPreparing] = useState(false);
-  const [statusMessage, setStatusMessage] = useState("Pronto para escanear.");
+  const [statusMessage, setStatusMessage] = useState(
+    "Escolha como deseja importar o conteúdo."
+  );
+  const [loading, setLoading] = useState(false);
+
+  // identidade (fase 6)
+  const [isLogged, setIsLogged] = useState(false);
+
+  const utteranceRef = useRef(null);
 
   const [usage, setUsage] = useState(() => {
     const saved = localStorage.getItem("usage");
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (Date.now() - parsed.lastReset < DAY_MS) return parsed;
+    if (!saved) {
+      return { pages: 0, pdfs: 0, resetAt: Date.now() + DAY_MS };
     }
-    return { pages: 0, pdfs: 0, lastReset: Date.now() };
+    const parsed = JSON.parse(saved);
+    if (Date.now() > parsed.resetAt) {
+      return { pages: 0, pdfs: 0, resetAt: Date.now() + DAY_MS };
+    }
+    return parsed;
   });
 
-  const utteranceRef = useRef(null);
-  const voicesRef = useRef([]);
-  const continueReadingRef = useRef(false);
-
-  // mobile
-  const blocksRef = useRef([]);
-  const blockIndexRef = useRef(0);
-
-  /* =========================
-     USAGE
-  ========================== */
   useEffect(() => {
     localStorage.setItem("usage", JSON.stringify(usage));
   }, [usage]);
 
-  function checkLimit(type) {
-    return usage[type] >= PLAN_LIMITS[plan][type];
+  function incrementUsage(type) {
+    setUsage((u) => ({ ...u, [type]: u[type] + 1 }));
   }
 
-  function increment(type) {
-    setUsage((p) => ({ ...p, [type]: p[type] + 1 }));
+  function canUse(type) {
+    return usage[type] < limits[plan][type];
   }
 
-  /* =========================
-     VOICES
-  ========================== */
-  useEffect(() => {
-    const load = () => {
-      const v = speechSynthesis.getVoices();
-      if (v.length) voicesRef.current = v;
-    };
-    load();
-    speechSynthesis.onvoiceschanged = load;
-    return () => (speechSynthesis.onvoiceschanged = null);
-  }, []);
+  function requireLogin(actionLabel) {
+    setStatusMessage(
+      `${actionLabel} disponível apenas após entrar com Google.`
+    );
+  }
 
-  /* =========================
-     OCR
-  ========================== */
-  async function handleImageUpload(file) {
+  /* ================= OCR ================= */
+  async function handleImageUpload(e) {
+    const file = e.target.files[0];
     if (!file) return;
 
-    if (checkLimit("pages")) {
-      setStatusMessage("Limite diário atingido. Assine para continuar.");
+    if (!canUse("pages")) {
+      setStatusMessage("Limite diário do plano Free atingido.");
       return;
     }
 
     setLoading(true);
-    setStatusMessage("Processando OCR…");
+    setStatusMessage("Processando imagem…");
 
     const formData = new FormData();
     formData.append("image", file);
@@ -90,111 +88,38 @@ export default function App() {
       const data = await res.json();
 
       if (data.text) {
-        setTexts((p) => [...p, data.text]);
+        setTexts((t) => [...t, data.text]);
         setActiveIndex(texts.length);
-        increment("pages");
-        setStatusMessage("Texto reconhecido.");
+        incrementUsage("pages");
+        setStatusMessage("Texto reconhecido. Pronto para leitura.");
       } else {
-        setStatusMessage("Nenhum texto reconhecido.");
+        setStatusMessage("Nenhum texto detectado.");
       }
     } catch {
-      setStatusMessage("Erro no OCR.");
+      setStatusMessage("Erro ao processar imagem.");
     } finally {
       setLoading(false);
     }
   }
 
-  /* =========================
-     SPEECH HELPERS
-  ========================== */
-  function splitIntoBlocks(text) {
-    return text.split(/(?<=[.!?])\s+/).filter(Boolean);
-  }
+  /* ================= PLAYER ================= */
+  function play() {
+    if (activeIndex === null) return;
+    stop();
 
-  function speakBlock(i) {
-    const block = blocksRef.current[i];
-    if (!block) return;
-
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(block);
-    u.lang = "pt-BR";
-
-    const voice =
-      voicesRef.current.find((v) => v.lang === "pt-BR") ||
-      voicesRef.current[0];
-    if (voice) u.voice = voice;
+    const u = new SpeechSynthesisUtterance(texts[activeIndex]);
+    utteranceRef.current = u;
 
     u.onstart = () => {
-      setPreparing(false);
       setPlayerState("playing");
-      setStatusMessage("Lendo…");
+      setStatusMessage("Leitura em andamento…");
     };
 
     u.onend = () => {
-      blockIndexRef.current++;
-
-      if (blockIndexRef.current < blocksRef.current.length) {
-        speakBlock(blockIndexRef.current);
-      } else {
-        handlePageEnd();
-      }
-    };
-
-    utteranceRef.current = u;
-    speechSynthesis.speak(u);
-  }
-
-  function handlePageEnd() {
-    if (
-      continueReadingRef.current &&
-      activeIndex + 1 < texts.length
-    ) {
-      play(activeIndex + 1);
-    } else {
       setPlayerState("idle");
       setStatusMessage("Leitura finalizada.");
-      continueReadingRef.current = false;
-    }
-  }
-
-  /* =========================
-     PLAYER
-  ========================== */
-  function play(index) {
-    speechSynthesis.cancel();
-    continueReadingRef.current = true;
-
-    const text = texts[index];
-    if (!text) return;
-
-    setPreparing(true);
-    setActiveIndex(index);
-    setStatusMessage("Preparando leitura…");
-
-    if (isMobile) {
-      blocksRef.current = splitIntoBlocks(text);
-      blockIndexRef.current = 0;
-      speakBlock(0);
-      return;
-    }
-
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = "pt-BR";
-
-    const voice =
-      voicesRef.current.find((v) => v.lang === "pt-BR") ||
-      voicesRef.current[0];
-    if (voice) u.voice = voice;
-
-    u.onstart = () => {
-      setPreparing(false);
-      setPlayerState("playing");
-      setStatusMessage("Lendo…");
     };
 
-    u.onend = handlePageEnd;
-
-    utteranceRef.current = u;
     speechSynthesis.speak(u);
   }
 
@@ -204,110 +129,131 @@ export default function App() {
     if (playerState === "playing") {
       speechSynthesis.pause();
       setPlayerState("paused");
-      continueReadingRef.current = false;
-      setStatusMessage("Leitura pausada.");
-    } else {
+    } else if (playerState === "paused") {
       speechSynthesis.resume();
       setPlayerState("playing");
-      continueReadingRef.current = true;
-      setStatusMessage("Leitura retomada.");
     }
   }
 
   function stop() {
     speechSynthesis.cancel();
-    continueReadingRef.current = false;
+    utteranceRef.current = null;
     setPlayerState("idle");
-    setStatusMessage("Leitura interrompida.");
   }
 
-  /* =========================
-     UI
-  ========================== */
-  return (
-    <div className="min-h-screen bg-neutral-900 text-neutral-200 flex justify-center p-4">
-      <div className="w-full max-w-5xl bg-neutral-800 rounded-2xl p-6 flex flex-col gap-4">
+  /* ================= DOWNLOAD ================= */
+  function downloadText() {
+    if (!limits[plan].download) {
+      requireLogin("Download");
+      return;
+    }
 
+    if (!isLogged) {
+      requireLogin("Download");
+      return;
+    }
+
+    const blob = new Blob([texts[activeIndex]], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pagina-${activeIndex + 1}.txt`;
+    a.click();
+
+    URL.revokeObjectURL(url);
+  }
+
+  /* ================= UI ================= */
+  return (
+    <div className="min-h-screen bg-neutral-900 text-neutral-200 flex items-center justify-center p-4">
+      <div className="w-full max-w-5xl bg-neutral-800 rounded-2xl p-6 flex flex-col gap-6">
+
+        {/* HEADER */}
         <header className="text-center">
           <h1 className="text-2xl font-semibold">Heitor Reader</h1>
-          <p className="text-sm opacity-70">Plano atual: {plan}</p>
+          <p className="text-sm opacity-70">
+            OCR com leitura contínua e acessível
+          </p>
         </header>
 
-        <div className="text-center text-sm text-cyan-400 min-h-[20px]">
+        {/* STATUS */}
+        <div className="text-center text-sm min-h-[20px] text-cyan-400">
           {statusMessage}
         </div>
 
-        <div className="text-center text-xs opacity-70">
-          Páginas hoje: {usage.pages} /{" "}
-          {PLAN_LIMITS[plan].pages === Infinity
-            ? "∞"
-            : PLAN_LIMITS[plan].pages}
-        </div>
-
-        {/* BOTÕES PRINCIPAIS */}
-        <section className="flex gap-4 justify-center flex-wrap">
-
-          {/* SCANNER */}
-          <label className="w-40 h-28 bg-green-900 border border-green-500 rounded-xl
-            flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-green-800">
-            <span>Scanner</span>
+        {/* IMPORTAÇÕES */}
+        <section className="flex justify-center gap-4 flex-wrap">
+          {/* Scanner */}
+          <label className="w-36 h-28 bg-green-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-green-700">
+            <CameraIcon className="h-8 w-8" />
+            <span className="text-sm">Scanner</span>
             <input
               type="file"
               accept="image/*"
               capture="environment"
               hidden
-              onChange={(e) => handleImageUpload(e.target.files[0])}
+              onChange={handleImageUpload}
             />
           </label>
 
-          {/* IMAGEM */}
-          <label className="w-40 h-28 bg-blue-900 border border-blue-500 rounded-xl
-            flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-blue-800">
-            <span>Imagem</span>
+          {/* Imagem */}
+          <label className="w-36 h-28 bg-cyan-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-cyan-700">
+            <PhotoIcon className="h-8 w-8" />
+            <span className="text-sm">Imagem</span>
             <input
               type="file"
               accept="image/*"
               hidden
-              onChange={(e) => handleImageUpload(e.target.files[0])}
+              onChange={handleImageUpload}
             />
           </label>
 
           {/* PDF */}
-          <div className="w-40 h-28 bg-neutral-700 border border-neutral-600 rounded-xl
-            flex items-center justify-center opacity-40">
-            PDF
+          <div className="w-36 h-28 bg-red-900 rounded-xl flex flex-col items-center justify-center gap-2 opacity-40">
+            <DocumentTextIcon className="h-8 w-8" />
+            <span className="text-sm">PDF</span>
           </div>
         </section>
 
-        {texts.length > 0 && (
-          <section className="flex gap-4 overflow-x-auto pb-2">
-            {texts.map((text, i) => (
-              <div
-                key={i}
-                className={`min-w-[320px] bg-neutral-900 rounded-xl p-4 border-2 ${
-                  activeIndex === i
-                    ? "border-green-500"
-                    : "border-neutral-700"
-                }`}
-              >
-                <div className="flex justify-between items-center mb-2">
-                  <span>Página {i + 1}</span>
-                  <div className="flex gap-1">
-                    <button onClick={() => play(i)}>▶</button>
-                    <button onClick={pauseOrResume}>
-                      {playerState === "paused" ? "▶" : "⏸"}
-                    </button>
-                    <button onClick={stop}>⏹</button>
-                  </div>
-                </div>
-
-                <div className="text-sm max-h-48 overflow-y-auto whitespace-pre-wrap">
-                  {text}
-                </div>
-              </div>
-            ))}
-          </section>
+        {/* TEXTO */}
+        {activeIndex !== null && (
+          <div className="bg-neutral-900 rounded-xl p-4 text-sm max-h-56 overflow-y-auto">
+            {texts[activeIndex]}
+          </div>
         )}
+
+        {/* PLAYER */}
+        {activeIndex !== null && (
+          <div className="flex justify-center gap-4 items-center">
+            <PlayIcon className="h-7 w-7 cursor-pointer" onClick={play} />
+            <PauseIcon className="h-7 w-7 cursor-pointer" onClick={pauseOrResume} />
+            <StopIcon className="h-7 w-7 cursor-pointer" onClick={stop} />
+            <ArrowDownTrayIcon
+              className="h-7 w-7 cursor-pointer opacity-70"
+              onClick={downloadText}
+            />
+          </div>
+        )}
+
+        {/* LOGIN CTA */}
+        {!isLogged && (
+          <button
+            onClick={() => {
+              setIsLogged(true);
+              setStatusMessage("Login simulado realizado.");
+            }}
+            className="mt-4 flex items-center justify-center gap-2 text-sm bg-neutral-700 hover:bg-neutral-600 p-3 rounded-xl"
+          >
+            <ArrowRightOnRectangleIcon className="h-5 w-5" />
+            Entrar com Google
+          </button>
+        )}
+
+        {/* FOOTER */}
+        <footer className="text-center text-xs text-neutral-400">
+          Uso hoje: {usage.pages}/{limits[plan].pages} páginas — Plano: {plan}
+        </footer>
       </div>
     </div>
   );
