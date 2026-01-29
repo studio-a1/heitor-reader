@@ -7,10 +7,12 @@ import {
   PhotoIcon,
   CameraIcon,
   DocumentTextIcon,
+  ArrowUturnLeftIcon,
   ArrowRightOnRectangleIcon,
 } from "@heroicons/react/24/solid";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
 
 export default function App() {
   const plan = "free"; // free | freemium | premium
@@ -28,12 +30,15 @@ export default function App() {
     "Escolha como deseja importar o conteúdo."
   );
   const [loading, setLoading] = useState(false);
-
-  // identidade (fase 6)
   const [isLogged, setIsLogged] = useState(false);
 
   const utteranceRef = useRef(null);
 
+  // MOBILE rewind control
+  const blocksRef = useRef([]);
+  const blockIndexRef = useRef(0);
+
+  /* ================= USAGE ================= */
   const [usage, setUsage] = useState(() => {
     const saved = localStorage.getItem("usage");
     if (!saved) {
@@ -58,10 +63,8 @@ export default function App() {
     return usage[type] < limits[plan][type];
   }
 
-  function requireLogin(actionLabel) {
-    setStatusMessage(
-      `${actionLabel} disponível apenas após entrar com Google.`
-    );
+  function requireLogin(label) {
+    setStatusMessage(`${label} disponível apenas após entrar com Google.`);
   }
 
   /* ================= OCR ================= */
@@ -88,10 +91,10 @@ export default function App() {
       const data = await res.json();
 
       if (data.text) {
-        setTexts((t) => [...t, data.text]);
+        setTexts((prev) => [...prev, data.text]);
         setActiveIndex(texts.length);
         incrementUsage("pages");
-        setStatusMessage("Texto reconhecido. Pronto para leitura.");
+        setStatusMessage("Texto reconhecido.");
       } else {
         setStatusMessage("Nenhum texto detectado.");
       }
@@ -103,22 +106,51 @@ export default function App() {
   }
 
   /* ================= PLAYER ================= */
-  function play() {
-    if (activeIndex === null) return;
-    stop();
+  function splitIntoBlocks(text) {
+    return text.split(/(?<=[.!?])\s+/).filter(Boolean);
+  }
 
-    const u = new SpeechSynthesisUtterance(texts[activeIndex]);
+  function speakBlock(i) {
+    const block = blocksRef.current[i];
+    if (!block) return;
+
+    speechSynthesis.cancel();
+
+    const u = new SpeechSynthesisUtterance(block);
     utteranceRef.current = u;
 
-    u.onstart = () => {
-      setPlayerState("playing");
-      setStatusMessage("Leitura em andamento…");
+    u.onstart = () => setPlayerState("playing");
+    u.onend = () => {
+      blockIndexRef.current++;
+      if (blockIndexRef.current < blocksRef.current.length) {
+        speakBlock(blockIndexRef.current);
+      } else {
+        setPlayerState("idle");
+      }
     };
 
-    u.onend = () => {
-      setPlayerState("idle");
-      setStatusMessage("Leitura finalizada.");
-    };
+    speechSynthesis.speak(u);
+  }
+
+  function play(index) {
+    stop();
+    setActiveIndex(index);
+
+    const text = texts[index];
+    if (!text) return;
+
+    if (isMobile) {
+      blocksRef.current = splitIntoBlocks(text);
+      blockIndexRef.current = 0;
+      speakBlock(0);
+      return;
+    }
+
+    const u = new SpeechSynthesisUtterance(text);
+    utteranceRef.current = u;
+
+    u.onstart = () => setPlayerState("playing");
+    u.onend = () => setPlayerState("idle");
 
     speechSynthesis.speak(u);
   }
@@ -135,30 +167,32 @@ export default function App() {
     }
   }
 
+  function rewind() {
+    if (!isMobile) return;
+    blockIndexRef.current = Math.max(0, blockIndexRef.current - 1);
+    speakBlock(blockIndexRef.current);
+  }
+
   function stop() {
     speechSynthesis.cancel();
     utteranceRef.current = null;
+    blockIndexRef.current = 0;
     setPlayerState("idle");
   }
 
   /* ================= DOWNLOAD ================= */
-  function downloadText() {
-    if (!limits[plan].download) {
+  function downloadText(text, index) {
+    if (!limits[plan].download || !isLogged) {
       requireLogin("Download");
       return;
     }
 
-    if (!isLogged) {
-      requireLogin("Download");
-      return;
-    }
-
-    const blob = new Blob([texts[activeIndex]], { type: "text/plain" });
+    const blob = new Blob([text], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
 
     const a = document.createElement("a");
     a.href = url;
-    a.download = `pagina-${activeIndex + 1}.txt`;
+    a.download = `pagina-${index + 1}.txt`;
     a.click();
 
     URL.revokeObjectURL(url);
@@ -167,27 +201,22 @@ export default function App() {
   /* ================= UI ================= */
   return (
     <div className="min-h-screen bg-neutral-900 text-neutral-200 flex items-center justify-center p-4">
-      <div className="w-full max-w-5xl bg-neutral-800 rounded-2xl p-6 flex flex-col gap-6">
+      <div className="w-full max-w-6xl bg-neutral-800 rounded-2xl p-6 flex flex-col gap-6">
 
-        {/* HEADER */}
         <header className="text-center">
           <h1 className="text-2xl font-semibold">Heitor Reader</h1>
-          <p className="text-sm opacity-70">
-            OCR com leitura contínua e acessível
-          </p>
+          <p className="text-sm opacity-70">OCR com leitura contínua</p>
         </header>
 
-        {/* STATUS */}
-        <div className="text-center text-sm min-h-[20px] text-cyan-400">
-          {statusMessage}
+        <div className="text-center text-sm text-cyan-400 min-h-[20px]">
+          {loading ? "Processando OCR…" : statusMessage}
         </div>
 
-        {/* IMPORTAÇÕES */}
+        {/* IMPORT */}
         <section className="flex justify-center gap-4 flex-wrap">
-          {/* Scanner */}
-          <label className="w-36 h-28 bg-green-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-green-700">
+          <label className="w-36 h-28 bg-green-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
             <CameraIcon className="h-8 w-8" />
-            <span className="text-sm">Scanner</span>
+            <span>Scanner</span>
             <input
               type="file"
               accept="image/*"
@@ -197,10 +226,9 @@ export default function App() {
             />
           </label>
 
-          {/* Imagem */}
-          <label className="w-36 h-28 bg-cyan-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-cyan-700">
+          <label className="w-36 h-28 bg-cyan-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
             <PhotoIcon className="h-8 w-8" />
-            <span className="text-sm">Imagem</span>
+            <span>Imagem</span>
             <input
               type="file"
               accept="image/*"
@@ -209,48 +237,73 @@ export default function App() {
             />
           </label>
 
-          {/* PDF */}
-          <div className="w-36 h-28 bg-red-900 rounded-xl flex flex-col items-center justify-center gap-2 opacity-40">
+          <div className="w-36 h-28 bg-red-900 opacity-40 rounded-xl flex flex-col items-center justify-center gap-2">
             <DocumentTextIcon className="h-8 w-8" />
-            <span className="text-sm">PDF</span>
+            <span>PDF</span>
           </div>
         </section>
 
-        {/* TEXTO */}
-        {activeIndex !== null && (
-          <div className="bg-neutral-900 rounded-xl p-4 text-sm max-h-56 overflow-y-auto">
-            {texts[activeIndex]}
-          </div>
+        {/* CARDS */}
+        {texts.length > 0 && (
+          <section className="flex gap-4 overflow-x-auto pb-2">
+            {texts.map((text, i) => (
+              <div
+                key={i}
+                className={`min-w-[320px] bg-neutral-900 rounded-xl p-4 border-2 ${
+                  activeIndex === i
+                    ? "border-green-500"
+                    : "border-neutral-700"
+                }`}
+              >
+                <div className="flex justify-between items-center mb-2 text-sm">
+                  <span>Página {i + 1}</span>
+                  <div className="flex gap-2">
+                    <PlayIcon
+                      className="h-5 w-5 cursor-pointer"
+                      onClick={() => play(i)}
+                    />
+                    <PauseIcon
+                      className="h-5 w-5 cursor-pointer"
+                      onClick={pauseOrResume}
+                    />
+                    {isMobile && (
+                      <ArrowUturnLeftIcon
+                        className="h-5 w-5 cursor-pointer"
+                        onClick={rewind}
+                      />
+                    )}
+                    <StopIcon
+                      className="h-5 w-5 cursor-pointer"
+                      onClick={stop}
+                    />
+                    <ArrowDownTrayIcon
+                      className="h-5 w-5 cursor-pointer opacity-70"
+                      onClick={() => downloadText(text, i)}
+                    />
+                  </div>
+                </div>
+
+                <div className="text-xs max-h-40 overflow-y-auto whitespace-pre-wrap">
+                  {text}
+                </div>
+              </div>
+            ))}
+          </section>
         )}
 
-        {/* PLAYER */}
-        {activeIndex !== null && (
-          <div className="flex justify-center gap-4 items-center">
-            <PlayIcon className="h-7 w-7 cursor-pointer" onClick={play} />
-            <PauseIcon className="h-7 w-7 cursor-pointer" onClick={pauseOrResume} />
-            <StopIcon className="h-7 w-7 cursor-pointer" onClick={stop} />
-            <ArrowDownTrayIcon
-              className="h-7 w-7 cursor-pointer opacity-70"
-              onClick={downloadText}
-            />
-          </div>
-        )}
-
-        {/* LOGIN CTA */}
         {!isLogged && (
           <button
             onClick={() => {
               setIsLogged(true);
               setStatusMessage("Login simulado realizado.");
             }}
-            className="mt-4 flex items-center justify-center gap-2 text-sm bg-neutral-700 hover:bg-neutral-600 p-3 rounded-xl"
+            className="mt-2 flex items-center justify-center gap-2 text-sm bg-neutral-700 p-3 rounded-xl"
           >
             <ArrowRightOnRectangleIcon className="h-5 w-5" />
             Entrar com Google
           </button>
         )}
 
-        {/* FOOTER */}
         <footer className="text-center text-xs text-neutral-400">
           Uso hoje: {usage.pages}/{limits[plan].pages} páginas — Plano: {plan}
         </footer>
