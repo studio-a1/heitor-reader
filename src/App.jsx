@@ -31,7 +31,7 @@ export default function App() {
   );
   const [loading, setLoading] = useState(false);
   const [isLogged, setIsLogged] = useState(false);
-  const [rewindFlash, setRewindFlash] = useState(false);
+  const [continuous, setContinuous] = useState(false);
 
   const utteranceRef = useRef(null);
   const blocksRef = useRef([]);
@@ -40,13 +40,10 @@ export default function App() {
   /* ================= USAGE ================= */
   const [usage, setUsage] = useState(() => {
     const saved = localStorage.getItem("usage");
-    if (!saved) {
-      return { pages: 0, pdfs: 0, resetAt: Date.now() + DAY_MS };
-    }
+    if (!saved) return { pages: 0, pdfs: 0, resetAt: Date.now() + DAY_MS };
     const parsed = JSON.parse(saved);
-    if (Date.now() > parsed.resetAt) {
+    if (Date.now() > parsed.resetAt)
       return { pages: 0, pdfs: 0, resetAt: Date.now() + DAY_MS };
-    }
     return parsed;
   });
 
@@ -63,7 +60,7 @@ export default function App() {
   }
 
   function requireLogin(label) {
-    setStatusMessage(`${label} disponível apenas após entrar com Google.`);
+    setStatusMessage(`${label} disponível após login com Google.`);
   }
 
   /* ================= OCR ================= */
@@ -114,22 +111,22 @@ export default function App() {
     if (!block) return;
 
     speechSynthesis.cancel();
-
     const u = new SpeechSynthesisUtterance(block);
     utteranceRef.current = u;
 
-    u.onstart = () => {
-      setPlayerState("playing");
-      setStatusMessage("Lendo…");
-    };
+    u.onstart = () => setPlayerState("playing");
 
     u.onend = () => {
       blockIndexRef.current++;
+
       if (blockIndexRef.current < blocksRef.current.length) {
         speakBlock(blockIndexRef.current);
       } else {
         setPlayerState("idle");
-        setStatusMessage("Leitura finalizada.");
+
+        if (continuous && activeIndex < texts.length - 1) {
+          play(activeIndex + 1);
+        }
       }
     };
 
@@ -143,6 +140,8 @@ export default function App() {
     const text = texts[index];
     if (!text) return;
 
+    setStatusMessage("Leitura iniciada.");
+
     if (isMobile) {
       blocksRef.current = splitIntoBlocks(text);
       blockIndexRef.current = 0;
@@ -153,14 +152,13 @@ export default function App() {
     const u = new SpeechSynthesisUtterance(text);
     utteranceRef.current = u;
 
-    u.onstart = () => {
-      setPlayerState("playing");
-      setStatusMessage("Lendo…");
-    };
+    u.onstart = () => setPlayerState("playing");
 
     u.onend = () => {
       setPlayerState("idle");
-      setStatusMessage("Leitura finalizada.");
+      if (continuous && index < texts.length - 1) {
+        play(index + 1);
+      }
     };
 
     speechSynthesis.speak(u);
@@ -191,9 +189,6 @@ export default function App() {
   function rewind() {
     if (!isMobile) return;
 
-    setRewindFlash(true);
-    setTimeout(() => setRewindFlash(false), 300);
-
     speechSynthesis.cancel();
     utteranceRef.current = null;
 
@@ -217,18 +212,16 @@ export default function App() {
 
     const blob = new Blob([text], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
-
     const a = document.createElement("a");
     a.href = url;
     a.download = `pagina-${index + 1}.txt`;
     a.click();
-
     URL.revokeObjectURL(url);
   }
 
   /* ================= UI ================= */
   return (
-    <div className="min-h-screen bg-neutral-900 text-neutral-200 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-neutral-900 text-neutral-200 flex justify-center p-4">
       <div className="w-full max-w-6xl bg-neutral-800 rounded-2xl p-6 flex flex-col gap-6">
 
         <header className="text-center">
@@ -240,18 +233,41 @@ export default function App() {
           {loading ? "Processando OCR…" : statusMessage}
         </div>
 
+        {/* TOGGLE */}
+        <div className="flex justify-center text-sm gap-2">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={continuous}
+              onChange={() => setContinuous(!continuous)}
+            />
+            Leitura contínua
+          </label>
+        </div>
+
         {/* IMPORT */}
         <section className="flex justify-center gap-4 flex-wrap">
           <label className="w-36 h-28 bg-green-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
             <CameraIcon className="h-8 w-8" />
             <span>Scanner</span>
-            <input type="file" accept="image/*" capture="environment" hidden onChange={handleImageUpload} />
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              hidden
+              onChange={handleImageUpload}
+            />
           </label>
 
           <label className="w-36 h-28 bg-cyan-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
             <PhotoIcon className="h-8 w-8" />
             <span>Imagem</span>
-            <input type="file" accept="image/*" hidden onChange={handleImageUpload} />
+            <input
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={handleImageUpload}
+            />
           </label>
 
           <div className="w-36 h-28 bg-red-900 opacity-40 rounded-xl flex flex-col items-center justify-center gap-2">
@@ -264,17 +280,39 @@ export default function App() {
         {texts.length > 0 && (
           <section className="flex gap-4 overflow-x-auto pb-2">
             {texts.map((text, i) => (
-              <div key={i} className={`min-w-[320px] bg-neutral-900 rounded-xl p-4 border-2 ${activeIndex === i ? "border-green-500" : "border-neutral-700"}`}>
+              <div
+                key={i}
+                className={`min-w-[280px] sm:min-w-[320px] bg-neutral-900 rounded-xl p-4 border-2 ${
+                  activeIndex === i
+                    ? "border-green-500"
+                    : "border-neutral-700"
+                }`}
+              >
                 <div className="flex justify-between items-center mb-2 text-sm">
                   <span>Página {i + 1}</span>
                   <div className="flex gap-2">
-                    <PlayIcon className={`h-5 w-5 cursor-pointer ${playerState === "playing" && activeIndex === i ? "text-green-400 ring-2 ring-green-500 rounded" : ""}`} onClick={() => play(i)} />
-                    <PauseIcon className={`h-5 w-5 cursor-pointer ${playerState === "paused" ? "text-yellow-400" : ""}`} onClick={pauseOrResume} />
+                    <PlayIcon
+                      className="h-5 w-5 cursor-pointer text-green-400"
+                      onClick={() => play(i)}
+                    />
+                    <PauseIcon
+                      className="h-5 w-5 cursor-pointer text-yellow-400"
+                      onClick={pauseOrResume}
+                    />
                     {isMobile && (
-                      <ArrowUturnLeftIcon className={`h-5 w-5 cursor-pointer ${rewindFlash ? "text-blue-400" : ""}`} onClick={rewind} />
+                      <ArrowUturnLeftIcon
+                        className="h-5 w-5 cursor-pointer text-blue-400"
+                        onClick={rewind}
+                      />
                     )}
-                    <StopIcon className="h-5 w-5 cursor-pointer text-red-400" onClick={stop} />
-                    <ArrowDownTrayIcon className="h-5 w-5 cursor-pointer opacity-70" onClick={() => downloadText(text, i)} />
+                    <StopIcon
+                      className="h-5 w-5 cursor-pointer text-red-400"
+                      onClick={stop}
+                    />
+                    <ArrowDownTrayIcon
+                      className="h-5 w-5 cursor-pointer opacity-70"
+                      onClick={() => downloadText(text, i)}
+                    />
                   </div>
                 </div>
 
@@ -306,3 +344,4 @@ export default function App() {
     </div>
   );
 }
+
