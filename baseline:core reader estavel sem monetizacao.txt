@@ -1,0 +1,297 @@
+import { useEffect, useRef, useState } from "react";
+import {
+  PlayIcon,
+  PauseIcon,
+  StopIcon,
+  ArrowDownTrayIcon,
+  PhotoIcon,
+  CameraIcon,
+  DocumentTextIcon,
+  ArrowUturnLeftIcon,
+} from "@heroicons/react/24/solid";
+
+const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
+
+export default function App() {
+  const [texts, setTexts] = useState([]);
+  const [activeIndex, setActiveIndex] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [preparing, setPreparing] = useState(false);
+  const [playerState, setPlayerState] = useState("idle");
+
+  const utteranceRef = useRef(null);
+  const voicesRef = useRef([]);
+
+  const blocksRef = useRef([]);
+  const blockIndexRef = useRef(0);
+
+  /* =========================
+     LOAD VOICES
+  ========================== */
+  useEffect(() => {
+    const loadVoices = () => {
+      const v = speechSynthesis.getVoices();
+      if (v.length) voicesRef.current = v;
+    };
+    loadVoices();
+    speechSynthesis.onvoiceschanged = loadVoices;
+    return () => (speechSynthesis.onvoiceschanged = null);
+  }, []);
+
+  /* =========================
+     OCR UPLOAD
+  ========================== */
+  async function handleImageUpload(file) {
+    if (!file) return;
+    setLoading(true);
+
+    const formData = new FormData();
+    formData.append("image", file);
+
+    try {
+      const res = await fetch("/.netlify/functions/ocr", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.text) {
+        setTexts((prev) => [...prev, data.text]);
+        setActiveIndex((prev) =>
+          prev === null ? 0 : prev
+        );
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  /* =========================
+     SPEECH HELPERS
+  ========================== */
+  function splitIntoBlocks(text) {
+    return text.split(/(?<=[.!?])\s+/).filter(Boolean);
+  }
+
+  function speakBlock(i) {
+    const block = blocksRef.current[i];
+    if (!block) return;
+
+    speechSynthesis.cancel();
+
+    const u = new SpeechSynthesisUtterance(block);
+    u.lang = "pt-BR";
+
+    const voice =
+      voicesRef.current.find((v) => v.lang === "pt-BR") ||
+      voicesRef.current[0];
+    if (voice) u.voice = voice;
+
+    u.onstart = () => {
+      setPreparing(false);
+      setPlayerState("playing");
+    };
+
+    u.onend = () => {
+      blockIndexRef.current++;
+      if (blockIndexRef.current < blocksRef.current.length) {
+        speakBlock(blockIndexRef.current);
+      } else {
+        setPlayerState("idle");
+      }
+    };
+
+    utteranceRef.current = u;
+    speechSynthesis.speak(u);
+  }
+
+  function play(index) {
+    speechSynthesis.cancel();
+    utteranceRef.current = null;
+
+    const text = texts[index];
+    if (!text) return;
+
+    setActiveIndex(index);
+    setPreparing(true);
+
+    if (isMobile) {
+      blocksRef.current = splitIntoBlocks(text);
+      blockIndexRef.current = 0;
+      speakBlock(0);
+      return;
+    }
+
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "pt-BR";
+
+    const voice =
+      voicesRef.current.find((v) => v.lang === "pt-BR") ||
+      voicesRef.current[0];
+    if (voice) u.voice = voice;
+
+    u.onstart = () => {
+      setPreparing(false);
+      setPlayerState("playing");
+    };
+    u.onend = () => setPlayerState("idle");
+    u.onerror = () => setPlayerState("idle");
+
+    utteranceRef.current = u;
+    speechSynthesis.speak(u);
+  }
+
+  function pauseOrResume() {
+    if (!utteranceRef.current) return;
+
+    if (playerState === "playing") {
+      speechSynthesis.pause();
+      setPlayerState("paused");
+    } else if (playerState === "paused") {
+      speechSynthesis.resume();
+      setPlayerState("playing");
+    }
+  }
+
+  function rewind() {
+    if (!isMobile) return;
+    blockIndexRef.current = Math.max(0, blockIndexRef.current - 1);
+    speakBlock(blockIndexRef.current);
+  }
+
+  function stop() {
+    speechSynthesis.cancel();
+    utteranceRef.current = null;
+    blockIndexRef.current = 0;
+    setPlayerState("idle");
+    setPreparing(false);
+  }
+
+  useEffect(() => {
+    return () => speechSynthesis.cancel();
+  }, []);
+
+  /* =========================
+     UI
+  ========================== */
+  return (
+    <div className="min-h-screen bg-neutral-900 text-neutral-100 p-4 flex justify-center">
+      <div className="w-full max-w-6xl bg-neutral-800 rounded-2xl p-6 flex flex-col gap-6">
+
+        <header className="text-center">
+          <h1 className="text-2xl font-semibold">Heitor Reader</h1>
+          <p className="text-sm opacity-80">OCR com leitura contínua</p>
+          <p className="text-sm opacity-60 mt-1">
+            Escolha como deseja importar o conteúdo
+          </p>
+        </header>
+
+        {/* IMPORT BUTTONS */}
+        <section className="flex flex-wrap gap-4 justify-center">
+          <label className="w-40 h-28 bg-green-900 border border-green-600 rounded-xl
+            flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-green-800">
+            <CameraIcon className="w-10 h-10" />
+            <span className="text-sm">Scanner</span>
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              hidden
+              onChange={(e) => handleImageUpload(e.target.files[0])}
+            />
+          </label>
+
+          <label className="w-40 h-28 bg-blue-900 border border-blue-600 rounded-xl
+            flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-blue-800">
+            <PhotoIcon className="w-10 h-10" />
+            <span className="text-sm">Imagem</span>
+            <input
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={(e) => handleImageUpload(e.target.files[0])}
+            />
+          </label>
+
+          <div className="w-40 h-28 bg-red-900 border border-red-600 rounded-xl
+            flex flex-col items-center justify-center gap-2 opacity-40">
+            <DocumentTextIcon className="w-10 h-10" />
+            <span className="text-sm">PDF</span>
+          </div>
+        </section>
+
+        {/* STATUS */}
+        <section className="text-center min-h-[24px]">
+          {loading && <p className="text-sm opacity-70">Processando OCR…</p>}
+          {preparing && (
+            <p className="text-sm text-yellow-400">
+              Preparando leitura…
+            </p>
+          )}
+        </section>
+
+        {/* CARDS */}
+        {texts.length > 0 && (
+          <section className="flex gap-4 overflow-x-auto pb-2">
+            {texts.map((text, i) => (
+              <div
+                key={i}
+                className={`min-w-[340px] bg-neutral-900 rounded-xl p-4 border-2 ${
+                  activeIndex === i
+                    ? "border-green-500"
+                    : "border-neutral-700"
+                }`}
+              >
+                <div className="flex justify-between items-center mb-3">
+                  <span className="text-sm">Página {i + 1}</span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => play(i)}
+                      className="p-2 bg-green-700 rounded"
+                    >
+                      <PlayIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={pauseOrResume}
+                      className="p-2 bg-blue-700 rounded"
+                    >
+                      {playerState === "paused" ? (
+                        <PlayIcon className="w-4 h-4" />
+                      ) : (
+                        <PauseIcon className="w-4 h-4" />
+                      )}
+                    </button>
+                    {isMobile && (
+                      <button
+                        onClick={rewind}
+                        className="p-2 bg-neutral-700 rounded"
+                      >
+                        <ArrowUturnLeftIcon className="w-4 h-4" />
+                      </button>
+                    )}
+                    <button
+                      onClick={stop}
+                      className="p-2 bg-red-700 rounded"
+                    >
+                      <StopIcon className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="text-sm max-h-48 overflow-y-auto whitespace-pre-wrap">
+                  {text}
+                </div>
+
+                <button className="mt-3 flex items-center gap-2 text-sm opacity-70 hover:opacity-100">
+                  <ArrowDownTrayIcon className="w-4 h-4" />
+                  Download áudio
+                </button>
+              </div>
+            ))}
+          </section>
+        )}
+      </div>
+    </div>
+  );
+}

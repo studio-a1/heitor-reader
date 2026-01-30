@@ -15,7 +15,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
 
 export default function App() {
-  const plan = "free"; // free | freemium | premium
+  const plan = "free";
 
   const limits = {
     free: { pages: 3, pdfs: 0, download: false },
@@ -33,8 +33,6 @@ export default function App() {
   const [isLogged, setIsLogged] = useState(false);
 
   const utteranceRef = useRef(null);
-
-  // MOBILE rewind control
   const blocksRef = useRef([]);
   const blockIndexRef = useRef(0);
 
@@ -80,21 +78,23 @@ export default function App() {
     setLoading(true);
     setStatusMessage("Processando imagem…");
 
-    const formData = new FormData();
-    formData.append("image", file);
-
     try {
       const res = await fetch("/.netlify/functions/ocr", {
         method: "POST",
-        body: formData,
+        body: (() => {
+          const fd = new FormData();
+          fd.append("image", file);
+          return fd;
+        })(),
       });
+
       const data = await res.json();
 
       if (data.text) {
         setTexts((prev) => [...prev, data.text]);
         setActiveIndex(texts.length);
         incrementUsage("pages");
-        setStatusMessage("Texto reconhecido.");
+        setStatusMessage("Texto pronto para escuta.");
       } else {
         setStatusMessage("Nenhum texto detectado.");
       }
@@ -110,22 +110,35 @@ export default function App() {
     return text.split(/(?<=[.!?])\s+/).filter(Boolean);
   }
 
+  function cleanupPlayer() {
+    speechSynthesis.cancel();
+    utteranceRef.current = null;
+    blockIndexRef.current = 0;
+    setPlayerState("idle");
+  }
+
   function speakBlock(i) {
     const block = blocksRef.current[i];
-    if (!block) return;
-
-    speechSynthesis.cancel();
+    if (!block) {
+      cleanupPlayer();
+      return;
+    }
 
     const u = new SpeechSynthesisUtterance(block);
     utteranceRef.current = u;
 
-    u.onstart = () => setPlayerState("playing");
+    u.onstart = () => {
+      setPlayerState("playing");
+      setStatusMessage("Leitura em andamento…");
+    };
+
     u.onend = () => {
       blockIndexRef.current++;
       if (blockIndexRef.current < blocksRef.current.length) {
         speakBlock(blockIndexRef.current);
       } else {
-        setPlayerState("idle");
+        cleanupPlayer();
+        setStatusMessage("Leitura finalizada.");
       }
     };
 
@@ -133,11 +146,12 @@ export default function App() {
   }
 
   function play(index) {
-    stop();
+    if (!texts[index]) return;
+
+    cleanupPlayer(); // reset seguro
     setActiveIndex(index);
 
     const text = texts[index];
-    if (!text) return;
 
     if (isMobile) {
       blocksRef.current = splitIntoBlocks(text);
@@ -149,8 +163,15 @@ export default function App() {
     const u = new SpeechSynthesisUtterance(text);
     utteranceRef.current = u;
 
-    u.onstart = () => setPlayerState("playing");
-    u.onend = () => setPlayerState("idle");
+    u.onstart = () => {
+      setPlayerState("playing");
+      setStatusMessage("Leitura em andamento…");
+    };
+
+    u.onend = () => {
+      cleanupPlayer();
+      setStatusMessage("Leitura finalizada.");
+    };
 
     speechSynthesis.speak(u);
   }
@@ -161,9 +182,11 @@ export default function App() {
     if (playerState === "playing") {
       speechSynthesis.pause();
       setPlayerState("paused");
+      setStatusMessage("Leitura pausada.");
     } else if (playerState === "paused") {
       speechSynthesis.resume();
       setPlayerState("playing");
+      setStatusMessage("Leitura retomada.");
     }
   }
 
@@ -174,10 +197,8 @@ export default function App() {
   }
 
   function stop() {
-    speechSynthesis.cancel();
-    utteranceRef.current = null;
-    blockIndexRef.current = 0;
-    setPlayerState("idle");
+    cleanupPlayer();
+    setStatusMessage("Leitura interrompida.");
   }
 
   /* ================= DOWNLOAD ================= */
@@ -212,29 +233,17 @@ export default function App() {
           {loading ? "Processando OCR…" : statusMessage}
         </div>
 
-        {/* IMPORT */}
         <section className="flex justify-center gap-4 flex-wrap">
           <label className="w-36 h-28 bg-green-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
             <CameraIcon className="h-8 w-8" />
             <span>Scanner</span>
-            <input
-              type="file"
-              accept="image/*"
-              capture="environment"
-              hidden
-              onChange={handleImageUpload}
-            />
+            <input type="file" accept="image/*" capture="environment" hidden onChange={handleImageUpload} />
           </label>
 
           <label className="w-36 h-28 bg-cyan-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
             <PhotoIcon className="h-8 w-8" />
             <span>Imagem</span>
-            <input
-              type="file"
-              accept="image/*"
-              hidden
-              onChange={handleImageUpload}
-            />
+            <input type="file" accept="image/*" hidden onChange={handleImageUpload} />
           </label>
 
           <div className="w-36 h-28 bg-red-900 opacity-40 rounded-xl flex flex-col items-center justify-center gap-2">
@@ -243,62 +252,29 @@ export default function App() {
           </div>
         </section>
 
-        {/* CARDS */}
         {texts.length > 0 && (
           <section className="flex gap-4 overflow-x-auto pb-2">
             {texts.map((text, i) => (
-              <div
-                key={i}
-                className={`min-w-[320px] bg-neutral-900 rounded-xl p-4 border-2 ${
-                  activeIndex === i
-                    ? "border-green-500"
-                    : "border-neutral-700"
-                }`}
-              >
+              <div key={i} className={`min-w-[320px] bg-neutral-900 rounded-xl p-4 border-2 ${activeIndex === i ? "border-green-500" : "border-neutral-700"}`}>
                 <div className="flex justify-between items-center mb-2 text-sm">
                   <span>Página {i + 1}</span>
                   <div className="flex gap-2">
-                    <PlayIcon
-                      className="h-5 w-5 cursor-pointer"
-                      onClick={() => play(i)}
-                    />
-                    <PauseIcon
-                      className="h-5 w-5 cursor-pointer"
-                      onClick={pauseOrResume}
-                    />
-                    {isMobile && (
-                      <ArrowUturnLeftIcon
-                        className="h-5 w-5 cursor-pointer"
-                        onClick={rewind}
-                      />
-                    )}
-                    <StopIcon
-                      className="h-5 w-5 cursor-pointer"
-                      onClick={stop}
-                    />
-                    <ArrowDownTrayIcon
-                      className="h-5 w-5 cursor-pointer opacity-70"
-                      onClick={() => downloadText(text, i)}
-                    />
+                    <PlayIcon className="h-5 w-5 cursor-pointer" onClick={() => play(i)} />
+                    <PauseIcon className="h-5 w-5 cursor-pointer" onClick={pauseOrResume} />
+                    {isMobile && <ArrowUturnLeftIcon className="h-5 w-5 cursor-pointer" onClick={rewind} />}
+                    <StopIcon className="h-5 w-5 cursor-pointer" onClick={stop} />
+                    <ArrowDownTrayIcon className="h-5 w-5 cursor-pointer opacity-70" onClick={() => downloadText(text, i)} />
                   </div>
                 </div>
-
-                <div className="text-xs max-h-40 overflow-y-auto whitespace-pre-wrap">
-                  {text}
-                </div>
+                <div className="text-xs max-h-40 overflow-y-auto whitespace-pre-wrap">{text}</div>
               </div>
             ))}
           </section>
         )}
 
         {!isLogged && (
-          <button
-            onClick={() => {
-              setIsLogged(true);
-              setStatusMessage("Login simulado realizado.");
-            }}
-            className="mt-2 flex items-center justify-center gap-2 text-sm bg-neutral-700 p-3 rounded-xl"
-          >
+          <button onClick={() => { setIsLogged(true); setStatusMessage("Login simulado realizado."); }}
+            className="mt-2 flex items-center justify-center gap-2 text-sm bg-neutral-700 p-3 rounded-xl">
             <ArrowRightOnRectangleIcon className="h-5 w-5" />
             Entrar com Google
           </button>
@@ -311,4 +287,3 @@ export default function App() {
     </div>
   );
 }
-
