@@ -31,6 +31,7 @@ export default function App() {
   );
   const [loading, setLoading] = useState(false);
   const [isLogged, setIsLogged] = useState(false);
+  const [rewindFlash, setRewindFlash] = useState(false);
 
   const utteranceRef = useRef(null);
   const blocksRef = useRef([]);
@@ -78,16 +79,14 @@ export default function App() {
     setLoading(true);
     setStatusMessage("Processando imagem…");
 
+    const formData = new FormData();
+    formData.append("image", file);
+
     try {
       const res = await fetch("/.netlify/functions/ocr", {
         method: "POST",
-        body: (() => {
-          const fd = new FormData();
-          fd.append("image", file);
-          return fd;
-        })(),
+        body: formData,
       });
-
       const data = await res.json();
 
       if (data.text) {
@@ -110,26 +109,18 @@ export default function App() {
     return text.split(/(?<=[.!?])\s+/).filter(Boolean);
   }
 
-  function cleanupPlayer() {
-    speechSynthesis.cancel();
-    utteranceRef.current = null;
-    blockIndexRef.current = 0;
-    setPlayerState("idle");
-  }
-
   function speakBlock(i) {
     const block = blocksRef.current[i];
-    if (!block) {
-      cleanupPlayer();
-      return;
-    }
+    if (!block) return;
+
+    speechSynthesis.cancel();
 
     const u = new SpeechSynthesisUtterance(block);
     utteranceRef.current = u;
 
     u.onstart = () => {
       setPlayerState("playing");
-      setStatusMessage("Leitura em andamento…");
+      setStatusMessage("Lendo…");
     };
 
     u.onend = () => {
@@ -137,7 +128,7 @@ export default function App() {
       if (blockIndexRef.current < blocksRef.current.length) {
         speakBlock(blockIndexRef.current);
       } else {
-        cleanupPlayer();
+        setPlayerState("idle");
         setStatusMessage("Leitura finalizada.");
       }
     };
@@ -146,12 +137,11 @@ export default function App() {
   }
 
   function play(index) {
-    if (!texts[index]) return;
-
-    cleanupPlayer(); // reset seguro
+    stop();
     setActiveIndex(index);
 
     const text = texts[index];
+    if (!text) return;
 
     if (isMobile) {
       blocksRef.current = splitIntoBlocks(text);
@@ -165,11 +155,11 @@ export default function App() {
 
     u.onstart = () => {
       setPlayerState("playing");
-      setStatusMessage("Leitura em andamento…");
+      setStatusMessage("Lendo…");
     };
 
     u.onend = () => {
-      cleanupPlayer();
+      setPlayerState("idle");
       setStatusMessage("Leitura finalizada.");
     };
 
@@ -177,45 +167,48 @@ export default function App() {
   }
 
   function pauseOrResume() {
-  if (!utteranceRef.current) return;
+    if (!utteranceRef.current) return;
 
-  if (isMobile) {
-    // MOBILE: pausa = stop lógico
-    speechSynthesis.cancel();
-    utteranceRef.current = null;
-    setPlayerState("paused");
-    setStatusMessage("Leitura pausada.");
-    return;
-  }
+    if (isMobile) {
+      speechSynthesis.cancel();
+      utteranceRef.current = null;
+      setPlayerState("paused");
+      setStatusMessage("Leitura pausada.");
+      return;
+    }
 
-  // DESKTOP (Edge / Chrome)
-  if (playerState === "playing") {
-    speechSynthesis.pause();
-    setPlayerState("paused");
-    setStatusMessage("Leitura pausada.");
-  } else if (playerState === "paused") {
-    speechSynthesis.resume();
-    setPlayerState("playing");
-    setStatusMessage("Leitura retomada.");
+    if (playerState === "playing") {
+      speechSynthesis.pause();
+      setPlayerState("paused");
+      setStatusMessage("Leitura pausada.");
+    } else if (playerState === "paused") {
+      speechSynthesis.resume();
+      setPlayerState("playing");
+      setStatusMessage("Leitura retomada.");
+    }
   }
-}
 
   function rewind() {
-  if (!isMobile) return;
+    if (!isMobile) return;
 
-  speechSynthesis.cancel();
-  utteranceRef.current = null;
+    setRewindFlash(true);
+    setTimeout(() => setRewindFlash(false), 300);
 
-  blockIndexRef.current = Math.max(0, blockIndexRef.current - 1);
-  speakBlock(blockIndexRef.current);
-}
+    speechSynthesis.cancel();
+    utteranceRef.current = null;
+
+    blockIndexRef.current = Math.max(0, blockIndexRef.current - 1);
+    speakBlock(blockIndexRef.current);
+  }
 
   function stop() {
-    cleanupPlayer();
+    speechSynthesis.cancel();
+    utteranceRef.current = null;
+    blockIndexRef.current = 0;
+    setPlayerState("idle");
     setStatusMessage("Leitura interrompida.");
   }
 
-  /* ================= DOWNLOAD ================= */
   function downloadText(text, index) {
     if (!limits[plan].download || !isLogged) {
       requireLogin("Download");
@@ -247,6 +240,7 @@ export default function App() {
           {loading ? "Processando OCR…" : statusMessage}
         </div>
 
+        {/* IMPORT */}
         <section className="flex justify-center gap-4 flex-wrap">
           <label className="w-36 h-28 bg-green-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
             <CameraIcon className="h-8 w-8" />
@@ -266,6 +260,7 @@ export default function App() {
           </div>
         </section>
 
+        {/* CARDS */}
         {texts.length > 0 && (
           <section className="flex gap-4 overflow-x-auto pb-2">
             {texts.map((text, i) => (
@@ -273,22 +268,32 @@ export default function App() {
                 <div className="flex justify-between items-center mb-2 text-sm">
                   <span>Página {i + 1}</span>
                   <div className="flex gap-2">
-                    <PlayIcon className="h-5 w-5 cursor-pointer" onClick={() => play(i)} />
-                    <PauseIcon className="h-5 w-5 cursor-pointer" onClick={pauseOrResume} />
-                    {isMobile && <ArrowUturnLeftIcon className="h-5 w-5 cursor-pointer" onClick={rewind} />}
-                    <StopIcon className="h-5 w-5 cursor-pointer" onClick={stop} />
+                    <PlayIcon className={`h-5 w-5 cursor-pointer ${playerState === "playing" && activeIndex === i ? "text-green-400 ring-2 ring-green-500 rounded" : ""}`} onClick={() => play(i)} />
+                    <PauseIcon className={`h-5 w-5 cursor-pointer ${playerState === "paused" ? "text-yellow-400" : ""}`} onClick={pauseOrResume} />
+                    {isMobile && (
+                      <ArrowUturnLeftIcon className={`h-5 w-5 cursor-pointer ${rewindFlash ? "text-blue-400" : ""}`} onClick={rewind} />
+                    )}
+                    <StopIcon className="h-5 w-5 cursor-pointer text-red-400" onClick={stop} />
                     <ArrowDownTrayIcon className="h-5 w-5 cursor-pointer opacity-70" onClick={() => downloadText(text, i)} />
                   </div>
                 </div>
-                <div className="text-xs max-h-40 overflow-y-auto whitespace-pre-wrap">{text}</div>
+
+                <div className="text-xs max-h-40 overflow-y-auto whitespace-pre-wrap">
+                  {text}
+                </div>
               </div>
             ))}
           </section>
         )}
 
         {!isLogged && (
-          <button onClick={() => { setIsLogged(true); setStatusMessage("Login simulado realizado."); }}
-            className="mt-2 flex items-center justify-center gap-2 text-sm bg-neutral-700 p-3 rounded-xl">
+          <button
+            onClick={() => {
+              setIsLogged(true);
+              setStatusMessage("Login simulado realizado.");
+            }}
+            className="mt-2 flex items-center justify-center gap-2 text-sm bg-neutral-700 p-3 rounded-xl"
+          >
             <ArrowRightOnRectangleIcon className="h-5 w-5" />
             Entrar com Google
           </button>
