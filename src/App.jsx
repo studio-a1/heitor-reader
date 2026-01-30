@@ -177,24 +177,38 @@ export default function App() {
   }
 
   function pauseOrResume() {
-    if (!utteranceRef.current) return;
+  if (!utteranceRef.current) return;
 
-    if (playerState === "playing") {
-      speechSynthesis.pause();
-      setPlayerState("paused");
-      setStatusMessage("Leitura pausada.");
-    } else if (playerState === "paused") {
-      speechSynthesis.resume();
-      setPlayerState("playing");
-      setStatusMessage("Leitura retomada.");
-    }
+  if (isMobile) {
+    // MOBILE: pausa = stop lógico
+    speechSynthesis.cancel();
+    utteranceRef.current = null;
+    setPlayerState("paused");
+    setStatusMessage("Leitura pausada.");
+    return;
   }
+
+  // DESKTOP (Edge / Chrome)
+  if (playerState === "playing") {
+    speechSynthesis.pause();
+    setPlayerState("paused");
+    setStatusMessage("Leitura pausada.");
+  } else if (playerState === "paused") {
+    speechSynthesis.resume();
+    setPlayerState("playing");
+    setStatusMessage("Leitura retomada.");
+  }
+}
 
   function rewind() {
-    if (!isMobile) return;
-    blockIndexRef.current = Math.max(0, blockIndexRef.current - 1);
-    speakBlock(blockIndexRef.current);
-  }
+  if (!isMobile) return;
+
+  speechSynthesis.cancel();
+  utteranceRef.current = null;
+
+  blockIndexRef.current = Math.max(0, blockIndexRef.current - 1);
+  speakBlock(blockIndexRef.current);
+}
 
   function stop() {
     cleanupPlayer();
