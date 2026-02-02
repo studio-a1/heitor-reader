@@ -242,11 +242,15 @@ export default function App() {
   }
 
   function play(index) {
-    stop();
-    warmUpVoice();
+  if (activeIndex !== index) {
+    speechSynthesis.cancel();
+    blockIndexRef.current = 0;
+  }
 
-    setActiveCardId(index);
-    setCurrentCardIndex(index);
+  warmUpVoice();
+  setActiveIndex(index);
+  setActivePlayerIndex(index);
+  readBlocksRef.current = 0;
 
     const clean = sanitizeForSpeech(texts[index]);
     blocksRef.current = splitIntoBlocks(clean, isMobile ? 450 : 600);
