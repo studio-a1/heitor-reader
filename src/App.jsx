@@ -11,18 +11,25 @@ import {
   ArrowRightOnRectangleIcon,
 } from "@heroicons/react/24/solid";
 
+/* PDF.JS — VITE SAFE */
+import * as pdfjsLib from "pdfjs-dist/build/pdf";
+import pdfWorker from "pdfjs-dist/build/pdf.worker?url";
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
 
 export default function App() {
+  /* ================= PLAN ================= */
   const plan = "free";
 
   const limits = {
-    free: { pages: 3, pdfs: 0, download: false },
+    free: { pages: 10, pdfs: 10, download: false },
     freemium: { pages: 10, pdfs: 5, download: true },
     premium: { pages: Infinity, pdfs: Infinity, download: true },
   };
 
+  /* ================= STATE ================= */
   const [texts, setTexts] = useState([]);
   const [activeIndex, setActiveIndex] = useState(null);
   const [playerState, setPlayerState] = useState("idle");
@@ -31,19 +38,37 @@ export default function App() {
   );
   const [loading, setLoading] = useState(false);
   const [isLogged, setIsLogged] = useState(false);
-  const [continuous, setContinuous] = useState(false);
+  const [rewindFlash, setRewindFlash] = useState(false);
 
   const utteranceRef = useRef(null);
   const blocksRef = useRef([]);
   const blockIndexRef = useRef(0);
+  const readBlocksRef = useRef(0);
+
+  /* ================= SAFE RESET ================= */
+  function safeResetReader() {
+    setTimeout(() => {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {}
+      utteranceRef.current = null;
+      blocksRef.current = [];
+      blockIndexRef.current = 0;
+      readBlocksRef.current = 0;
+      setPlayerState("idle");
+    }, 0);
+  }
 
   /* ================= USAGE ================= */
   const [usage, setUsage] = useState(() => {
     const saved = localStorage.getItem("usage");
-    if (!saved) return { pages: 0, pdfs: 0, resetAt: Date.now() + DAY_MS };
-    const parsed = JSON.parse(saved);
-    if (Date.now() > parsed.resetAt)
+    if (!saved) {
       return { pages: 0, pdfs: 0, resetAt: Date.now() + DAY_MS };
+    }
+    const parsed = JSON.parse(saved);
+    if (Date.now() > parsed.resetAt) {
+      return { pages: 0, pdfs: 0, resetAt: Date.now() + DAY_MS };
+    }
     return parsed;
   });
 
@@ -60,37 +85,75 @@ export default function App() {
   }
 
   function requireLogin(label) {
-    setStatusMessage(`${label} disponível após login com Google.`);
+    setStatusMessage(`${label} disponível apenas após login.`);
   }
 
-  /* ================= OCR ================= */
+  /* ================= TEXT CLEAN ================= */
+  function cleanPdfText(text) {
+    return text
+      .replace(/-\s*\n\s*/g, "")
+      .replace(/\n{2,}/g, "\n")
+      .replace(/([^\.\!\?\:])\n+/g, "$1 ")
+      .replace(/\s+([.,!?;:])/g, "$1")
+      .replace(/([.!?])([A-ZÁ-Ú])/g, "$1 $2")
+      .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF]/g, "")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+  }
+
+  function splitIntoBlocks(text, maxLength = 600) {
+    const sentences = text
+      .replace(/\s+/g, " ")
+      .replace(/([.!?])([A-ZÁ-Ú])/g, "$1 $2")
+      .split(/(?<=[.!?])\s+(?=[A-ZÁ-Ú])/)
+      .filter((s) => s.length > 12);
+
+    const blocks = [];
+    let current = "";
+
+    for (const s of sentences) {
+      if ((current + s).length <= maxLength) {
+        current += s + " ";
+      } else {
+        blocks.push(current.trim());
+        current = s + " ";
+      }
+    }
+    if (current.trim()) blocks.push(current.trim());
+    return blocks;
+  }
+
+  /* ================= OCR IMAGE ================= */
   async function handleImageUpload(e) {
     const file = e.target.files[0];
     if (!file) return;
 
+    safeResetReader();
+
     if (!canUse("pages")) {
-      setStatusMessage("Limite diário do plano Free atingido.");
+      setStatusMessage("Limite diário de imagens atingido.");
       return;
     }
 
     setLoading(true);
     setStatusMessage("Processando imagem…");
 
-    const formData = new FormData();
-    formData.append("image", file);
-
     try {
+      const formData = new FormData();
+      formData.append("image", file);
+
       const res = await fetch("/.netlify/functions/ocr", {
         method: "POST",
         body: formData,
       });
+
       const data = await res.json();
 
-      if (data.text) {
+      if (data.text && data.text.trim().length > 20) {
         setTexts((prev) => [...prev, data.text]);
         setActiveIndex(texts.length);
         incrementUsage("pages");
-        setStatusMessage("Texto pronto para escuta.");
+        setStatusMessage("Imagem pronta para leitura.");
       } else {
         setStatusMessage("Nenhum texto detectado.");
       }
@@ -98,35 +161,91 @@ export default function App() {
       setStatusMessage("Erro ao processar imagem.");
     } finally {
       setLoading(false);
+      e.target.value = "";
+    }
+  }
+
+  /* ================= PDF ================= */
+  async function handlePdfUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    safeResetReader();
+
+    if (!canUse("pdfs")) {
+      setStatusMessage("Limite diário de PDFs atingido.");
+      e.target.value = "";
+      return;
+    }
+
+    setLoading(true);
+    setStatusMessage("Lendo PDF…");
+
+    let loadingTask;
+
+    try {
+      const buffer = await file.arrayBuffer();
+      loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) });
+      const pdf = await loadingTask.promise;
+
+      let fullText = "";
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        fullText += content.items.map((i) => i.str).join(" ") + "\n\n";
+      }
+
+      const cleaned = cleanPdfText(fullText);
+
+      if (cleaned.length < 30) {
+        setStatusMessage("PDF sem texto legível.");
+        return;
+      }
+
+      setTexts((prev) => [...prev, cleaned]);
+      setActiveIndex(texts.length);
+      incrementUsage("pdfs");
+      setStatusMessage("PDF carregado.");
+    } catch {
+      setStatusMessage("Erro ao ler PDF.");
+    } finally {
+      try {
+        loadingTask?.destroy();
+      } catch {}
+      setLoading(false);
+      e.target.value = "";
     }
   }
 
   /* ================= PLAYER ================= */
-  function splitIntoBlocks(text) {
-    return text.split(/(?<=[.!?])\s+/).filter(Boolean);
-  }
-
   function speakBlock(i) {
     const block = blocksRef.current[i];
     if (!block) return;
 
-    speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(block);
     utteranceRef.current = u;
 
-    u.onstart = () => setPlayerState("playing");
+    u.onstart = () => {
+      setPlayerState("playing");
+      setStatusMessage("Lendo…");
+    };
 
     u.onend = () => {
+      readBlocksRef.current++;
       blockIndexRef.current++;
+
+      if (plan === "free" && readBlocksRef.current >= 25) {
+        stop();
+        setStatusMessage("Limite de leitura atingido.");
+        return;
+      }
 
       if (blockIndexRef.current < blocksRef.current.length) {
         speakBlock(blockIndexRef.current);
       } else {
-        setPlayerState("idle");
-
-        if (continuous && activeIndex < texts.length - 1) {
-          play(activeIndex + 1);
-        }
+        stop();
+        setStatusMessage("Leitura finalizada.");
       }
     };
 
@@ -136,62 +255,35 @@ export default function App() {
   function play(index) {
     stop();
     setActiveIndex(index);
+    readBlocksRef.current = 0;
 
     const text = texts[index];
     if (!text) return;
 
-    setStatusMessage("Leitura iniciada.");
+    blocksRef.current = splitIntoBlocks(text, isMobile ? 450 : 600);
+    blockIndexRef.current = 0;
 
-    if (isMobile) {
-      blocksRef.current = splitIntoBlocks(text);
-      blockIndexRef.current = 0;
-      speakBlock(0);
-      return;
-    }
-
-    const u = new SpeechSynthesisUtterance(text);
-    utteranceRef.current = u;
-
-    u.onstart = () => setPlayerState("playing");
-
-    u.onend = () => {
-      setPlayerState("idle");
-      if (continuous && index < texts.length - 1) {
-        play(index + 1);
-      }
-    };
-
-    speechSynthesis.speak(u);
+    speakBlock(0);
   }
 
   function pauseOrResume() {
     if (!utteranceRef.current) return;
 
-    if (isMobile) {
-      speechSynthesis.cancel();
-      utteranceRef.current = null;
-      setPlayerState("paused");
-      setStatusMessage("Leitura pausada.");
-      return;
-    }
-
     if (playerState === "playing") {
       speechSynthesis.pause();
       setPlayerState("paused");
-      setStatusMessage("Leitura pausada.");
-    } else if (playerState === "paused") {
+      setStatusMessage("Pausado.");
+    } else {
       speechSynthesis.resume();
       setPlayerState("playing");
-      setStatusMessage("Leitura retomada.");
+      setStatusMessage("Retomando…");
     }
   }
 
   function rewind() {
     if (!isMobile) return;
-
-    speechSynthesis.cancel();
-    utteranceRef.current = null;
-
+    setRewindFlash(true);
+    setTimeout(() => setRewindFlash(false), 300);
     blockIndexRef.current = Math.max(0, blockIndexRef.current - 1);
     speakBlock(blockIndexRef.current);
   }
@@ -201,7 +293,6 @@ export default function App() {
     utteranceRef.current = null;
     blockIndexRef.current = 0;
     setPlayerState("idle");
-    setStatusMessage("Leitura interrompida.");
   }
 
   function downloadText(text, index) {
@@ -209,7 +300,6 @@ export default function App() {
       requireLogin("Download");
       return;
     }
-
     const blob = new Blob([text], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -221,39 +311,25 @@ export default function App() {
 
   /* ================= UI ================= */
   return (
-    <div className="min-h-screen bg-neutral-900 text-neutral-200 flex justify-center p-4">
+    <div className="min-h-screen bg-neutral-900 text-neutral-200 flex items-center justify-center p-4">
       <div className="w-full max-w-6xl bg-neutral-800 rounded-2xl p-6 flex flex-col gap-6">
-
         <header className="text-center">
           <h1 className="text-2xl font-semibold">Heitor Reader</h1>
-          <p className="text-sm opacity-70">OCR com leitura contínua</p>
+          <p className="text-sm opacity-70">Leitura assistida</p>
         </header>
 
         <div className="text-center text-sm text-cyan-400 min-h-[20px]">
-          {loading ? "Processando OCR…" : statusMessage}
+          {loading ? "Processando…" : statusMessage}
         </div>
 
-        {/* TOGGLE */}
-        <div className="flex justify-center text-sm gap-2">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={continuous}
-              onChange={() => setContinuous(!continuous)}
-            />
-            Leitura contínua
-          </label>
-        </div>
-
-        {/* IMPORT */}
         <section className="flex justify-center gap-4 flex-wrap">
           <label className="w-36 h-28 bg-green-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
             <CameraIcon className="h-8 w-8" />
             <span>Scanner</span>
             <input
+              key={Date.now()}
               type="file"
               accept="image/*"
-              capture="environment"
               hidden
               onChange={handleImageUpload}
             />
@@ -263,6 +339,7 @@ export default function App() {
             <PhotoIcon className="h-8 w-8" />
             <span>Imagem</span>
             <input
+              key={Date.now() + 1}
               type="file"
               accept="image/*"
               hidden
@@ -270,38 +347,38 @@ export default function App() {
             />
           </label>
 
-          <div className="w-36 h-28 bg-red-900 opacity-40 rounded-xl flex flex-col items-center justify-center gap-2">
+          <label className="w-36 h-28 bg-red-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
             <DocumentTextIcon className="h-8 w-8" />
             <span>PDF</span>
-          </div>
+            <input
+              key={Date.now() + 2}
+              type="file"
+              accept="application/pdf"
+              hidden
+              onChange={handlePdfUpload}
+            />
+          </label>
         </section>
 
-        {/* CARDS */}
         {texts.length > 0 && (
           <section className="flex gap-4 overflow-x-auto pb-2">
             {texts.map((text, i) => (
               <div
                 key={i}
-                className={`min-w-[280px] sm:min-w-[320px] bg-neutral-900 rounded-xl p-4 border-2 ${
-                  activeIndex === i
-                    ? "border-green-500"
-                    : "border-neutral-700"
+                className={`min-w-[320px] bg-neutral-900 rounded-xl p-4 border-2 ${
+                  activeIndex === i ? "border-green-500" : "border-neutral-700"
                 }`}
               >
                 <div className="flex justify-between items-center mb-2 text-sm">
                   <span>Página {i + 1}</span>
                   <div className="flex gap-2">
-                    <PlayIcon
-                      className="h-5 w-5 cursor-pointer text-green-400"
-                      onClick={() => play(i)}
-                    />
-                    <PauseIcon
-                      className="h-5 w-5 cursor-pointer text-yellow-400"
-                      onClick={pauseOrResume}
-                    />
+                    <PlayIcon className="h-5 w-5 cursor-pointer" onClick={() => play(i)} />
+                    <PauseIcon className="h-5 w-5 cursor-pointer" onClick={pauseOrResume} />
                     {isMobile && (
                       <ArrowUturnLeftIcon
-                        className="h-5 w-5 cursor-pointer text-blue-400"
+                        className={`h-5 w-5 cursor-pointer ${
+                          rewindFlash ? "text-blue-400" : ""
+                        }`}
                         onClick={rewind}
                       />
                     )}
@@ -326,22 +403,19 @@ export default function App() {
 
         {!isLogged && (
           <button
-            onClick={() => {
-              setIsLogged(true);
-              setStatusMessage("Login simulado realizado.");
-            }}
+            onClick={() => setIsLogged(true)}
             className="mt-2 flex items-center justify-center gap-2 text-sm bg-neutral-700 p-3 rounded-xl"
           >
             <ArrowRightOnRectangleIcon className="h-5 w-5" />
-            Entrar com Google
+            Entrar
           </button>
         )}
 
         <footer className="text-center text-xs text-neutral-400">
-          Uso hoje: {usage.pages}/{limits[plan].pages} páginas — Plano: {plan}
+          Uso hoje: {usage.pages}/{limits[plan].pages} imagens •{" "}
+          {usage.pdfs}/{limits[plan].pdfs} PDFs — Plano {plan.toUpperCase()}
         </footer>
       </div>
     </div>
   );
 }
-
