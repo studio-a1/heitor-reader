@@ -34,16 +34,14 @@ export default function App() {
   /* ================= STATE ================= */
   const [texts, setTexts] = useState([]);
   const [activeCardId, setActiveCardId] = useState(null);
-  const [currentCardIndex, setCurrentCardIndex] = useState(null);
-
-  const [playerState, setPlayerState] = useState("idle"); // idle | playing | paused
+  const [playerState, setPlayerState] = useState("idle");
   const [statusMessage, setStatusMessage] = useState(
     "Escolha como deseja importar o conteúdo."
   );
   const [loading, setLoading] = useState(false);
   const [isLogged, setIsLogged] = useState(false);
-  const [rewindFlash, setRewindFlash] = useState(false);
   const [continuous, setContinuous] = useState(false);
+  const [rewindFlash, setRewindFlash] = useState(false);
 
   const utteranceRef = useRef(null);
   const blocksRef = useRef([]);
@@ -52,15 +50,12 @@ export default function App() {
 
   /* ================= SAFE RESET ================= */
   function safeResetReader() {
-    try {
-      speechSynthesis.cancel();
-    } catch {}
+    speechSynthesis.cancel();
     utteranceRef.current = null;
     blocksRef.current = [];
     blockIndexRef.current = 0;
     setPlayerState("idle");
     setActiveCardId(null);
-    setCurrentCardIndex(null);
   }
 
   /* ================= USAGE ================= */
@@ -86,20 +81,13 @@ export default function App() {
     return usage[type] < limits[plan][type];
   }
 
-  /* ================= TEXT CLEAN ================= */
-  function cleanPdfText(text) {
-    return text
-      .replace(/Segue a transcrição[^.]*\./gi, "")
-      .replace(/Página\s+\d+/gi, "")
-      .replace(/\s{2,}/g, " ")
-      .trim();
-  }
-
-  function sanitizeForSpeech(text) {
+  /* ================= TEXT SANITIZATION ================= */
+  function sanitizeText(text) {
     return text
       .replace(/NARRAÇÃO[^.]*\./gi, "")
       .replace(/Segue a transcrição[^.]*\./gi, "")
       .replace(/Página\s+\d+/gi, "")
+      .replace(/\s{2,}/g, " ")
       .trim();
   }
 
@@ -129,14 +117,9 @@ export default function App() {
     if (!file) return;
 
     safeResetReader();
-
-    if (!canUse("pages")) {
-      setStatusMessage("Limite diário de imagens atingido.");
-      return;
-    }
+    if (!canUse("pages")) return;
 
     setLoading(true);
-    setStatusMessage("Processando imagem…");
 
     try {
       const formData = new FormData();
@@ -148,14 +131,10 @@ export default function App() {
       });
 
       const data = await res.json();
-
-      if (data.text && data.text.length > 20) {
-        setTexts((prev) => [...prev, data.text]);
+      if (data.text?.length > 20) {
+        setTexts((p) => [...p, sanitizeText(data.text)]);
         incrementUsage("pages");
-        setStatusMessage("Imagem pronta para leitura.");
       }
-    } catch {
-      setStatusMessage("Erro ao processar imagem.");
     } finally {
       setLoading(false);
       e.target.value = "";
@@ -168,36 +147,25 @@ export default function App() {
     if (!file) return;
 
     safeResetReader();
-
-    if (!canUse("pdfs")) {
-      setStatusMessage("Limite diário de PDFs atingido.");
-      return;
-    }
+    if (!canUse("pdfs")) return;
 
     setLoading(true);
-    setStatusMessage("Lendo PDF…");
 
     try {
       const buffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({
-        data: new Uint8Array(buffer),
-      }).promise;
+      const pdf = await pdfjsLib
+        .getDocument({ data: new Uint8Array(buffer) })
+        .promise;
 
       let fullText = "";
-
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const content = await page.getTextContent();
         fullText += content.items.map((i) => i.str).join(" ") + "\n";
       }
 
-      const cleaned = cleanPdfText(fullText);
-
-      setTexts((prev) => [...prev, cleaned]);
+      setTexts((p) => [...p, sanitizeText(fullText)]);
       incrementUsage("pdfs");
-      setStatusMessage("PDF carregado.");
-    } catch {
-      setStatusMessage("Erro ao ler PDF.");
     } finally {
       setLoading(false);
       e.target.value = "";
@@ -213,28 +181,23 @@ export default function App() {
     warmedUpRef.current = true;
   }
 
-  function speakBlock(cardIndex, blockIndex) {
-    const block = blocksRef.current[blockIndex];
+  function speakBlock(cardIndex) {
+    const block = blocksRef.current[blockIndexRef.current];
     if (!block) return;
 
     const u = new SpeechSynthesisUtterance(block);
     utteranceRef.current = u;
 
-    u.onstart = () => {
-      setPlayerState("playing");
-      setStatusMessage("Lendo…");
-    };
+    u.onstart = () => setPlayerState("playing");
 
     u.onend = () => {
-      blockIndexRef.current += 1;
-
+      blockIndexRef.current++;
       if (blockIndexRef.current < blocksRef.current.length) {
-        speakBlock(cardIndex, blockIndexRef.current);
+        speakBlock(cardIndex);
       } else if (continuous && cardIndex < texts.length - 1) {
         play(cardIndex + 1);
       } else {
         stop();
-        setStatusMessage("Leitura finalizada.");
       }
     };
 
@@ -242,53 +205,50 @@ export default function App() {
   }
 
   function play(index) {
-    stop();
+    speechSynthesis.cancel();
     warmUpVoice();
 
     setActiveCardId(index);
-    setCurrentCardIndex(index);
-
-    const clean = sanitizeForSpeech(texts[index]);
-    blocksRef.current = splitIntoBlocks(clean, isMobile ? 450 : 600);
     blockIndexRef.current = 0;
 
-    speakBlock(index, 0);
+    blocksRef.current = splitIntoBlocks(
+      sanitizeText(texts[index]),
+      isMobile ? 420 : 600
+    );
+
+    speakBlock(index);
   }
 
   function pauseOrResume(index) {
     if (activeCardId !== index) return;
-
     if (playerState === "playing") {
       speechSynthesis.pause();
       setPlayerState("paused");
-      setStatusMessage("Pausado.");
     } else {
       speechSynthesis.resume();
       setPlayerState("playing");
-      setStatusMessage("Retomando…");
     }
   }
 
   function rewind(index) {
-    if (activeCardId !== index) return;
+    if (activeCardId !== index || blockIndexRef.current === 0) return;
 
     setRewindFlash(true);
-    setTimeout(() => setRewindFlash(false), 250);
+    setTimeout(() => setRewindFlash(false), 200);
 
     speechSynthesis.cancel();
-    blockIndexRef.current = Math.max(0, blockIndexRef.current - 1);
-    speakBlock(index, blockIndexRef.current);
+    blockIndexRef.current--;
+    speakBlock(index);
   }
 
   function stop() {
     speechSynthesis.cancel();
-    utteranceRef.current = null;
-    blockIndexRef.current = 0;
     setPlayerState("idle");
     setActiveCardId(null);
+    blockIndexRef.current = 0;
   }
 
-  /* ================= UI ================= */
+   /* ================= UI ================= */
   return (
     <div className="min-h-screen bg-neutral-900 text-neutral-200 p-4">
       <div className="max-w-6xl mx-auto bg-neutral-800 rounded-2xl p-6 space-y-6">
@@ -423,3 +383,4 @@ export default function App() {
     </div>
   );
 }
+
