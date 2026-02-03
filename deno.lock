@@ -25,6 +25,8 @@
         "npm:globals@^16.5.0",
         "npm:heroicons@^2.2.0",
         "npm:lucide-react@0.563",
+        "npm:mammoth@^1.11.0",
+        "npm:netlify@^23.14.0",
         "npm:openai@^6.16.0",
         "npm:pdfjs-dist@^5.4.530",
         "npm:postcss@^8.5.6",
