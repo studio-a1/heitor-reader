@@ -19,7 +19,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const plan = "free";
 
 const limits = {
-  free: { pages: 23, pdfs: 21 },
+  free: { pages: 3, pdfs: 1 },
   freemium: { pages: 10, pdfs: 5 },
   premium: { pages: Infinity, pdfs: Infinity },
 };
