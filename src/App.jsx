@@ -67,6 +67,7 @@ export default function App() {
   const blocksRef = useRef([]);
   const blockIndexRef = useRef(0);
   const warmedUpRef = useRef(false);
+  const charIndexRef = useRef(0);
 
   /* ================= SANITIZE ================= */
   function sanitizeText(text) {
@@ -112,6 +113,12 @@ export default function App() {
 
     const u = new SpeechSynthesisUtterance(block);
     utteranceRef.current = u;
+    
+    u.onboundary = (e) => {
+  if (e.name === "word") {
+    charIndexRef.current = e.charIndex;
+  }
+};
 
     u.onstart = () => {
       setPlayerState("playing");
@@ -149,11 +156,12 @@ export default function App() {
   }
 
   function pausePlayback(index) {
-    if (activeCardId !== index) return;
-    speechSynthesis.pause();
-    setPlayerState("paused");
-    setStatusMessage("Leitura pausada");
-  }
+  if (activeCardId !== index) return;
+
+  speechSynthesis.pause();
+  setPlayerState("paused");
+  setStatusMessage("Leitura pausada");
+}
 
  function resumePlayback(index) {
   if (activeCardId !== index) return;
@@ -166,9 +174,29 @@ export default function App() {
     return;
   }
 
-  // MOBILE → NÃO cancelar
-  // apenas retomar o utterance pausado
-  speechSynthesis.resume();
+  // MOBILE → recriar utterance do ponto exato
+  speechSynthesis.cancel();
+
+  const fullBlock = blocksRef.current[blockIndexRef.current];
+  const remainingText = fullBlock.slice(charIndexRef.current);
+
+  if (!remainingText.trim()) return;
+
+  const u = new SpeechSynthesisUtterance(remainingText);
+  utteranceRef.current = u;
+
+  u.onend = () => {
+    blockIndexRef.current += 1;
+    charIndexRef.current = 0;
+
+    if (blockIndexRef.current < blocksRef.current.length) {
+      speakBlock(index);
+    } else {
+      stopPlayback();
+    }
+  };
+
+  speechSynthesis.speak(u);
 
   setPlayerState("playing");
   setStatusMessage("Retomando leitura…");
