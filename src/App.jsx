@@ -158,7 +158,7 @@ export default function App() {
   function resumePlayback(index) {
   if (activeCardId !== index) return;
 
-  // DESKTOP → mantém o que já funciona
+  // DESKTOP → mantém tudo como estava (perfeito)
   if (!isMobile) {
     speechSynthesis.resume();
     setPlayerState("playing");
@@ -166,12 +166,16 @@ export default function App() {
     return;
   }
 
-  // MOBILE → workaround obrigatório
+  // MOBILE → retomar do ponto exato da pausa
   speechSynthesis.cancel();
+
   setPlayerState("playing");
   setStatusMessage("Retomando leitura…");
 
-  // retoma exatamente do ponto pausado
+  // ⚠️ MUITO IMPORTANTE:
+  // NÃO resetar blockIndexRef
+  // NÃO recriar blocksRef
+  // Apenas continuar
   speakBlock(index);
 }
 
