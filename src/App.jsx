@@ -155,10 +155,10 @@ export default function App() {
     setStatusMessage("Leitura pausada");
   }
 
-  function resumePlayback(index) {
+ function resumePlayback(index) {
   if (activeCardId !== index) return;
 
-  // DESKTOP → mantém tudo como estava (perfeito)
+  // DESKTOP → continua perfeito
   if (!isMobile) {
     speechSynthesis.resume();
     setPlayerState("playing");
@@ -166,17 +166,12 @@ export default function App() {
     return;
   }
 
-  // MOBILE → retomar do ponto exato da pausa
-  speechSynthesis.cancel();
+  // MOBILE → NÃO cancelar
+  // apenas retomar o utterance pausado
+  speechSynthesis.resume();
 
   setPlayerState("playing");
   setStatusMessage("Retomando leitura…");
-
-  // ⚠️ MUITO IMPORTANTE:
-  // NÃO resetar blockIndexRef
-  // NÃO recriar blocksRef
-  // Apenas continuar
-  speakBlock(index);
 }
 
   function rewind(index) {
