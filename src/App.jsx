@@ -283,7 +283,7 @@ export default function App() {
             return (
               <div
                 key={i}
-                className={`min-w-[290px] bg-neutral-900 p-4 rounded-xl border-2 ${
+                className={`min-w-[280px] bg-neutral-900 p-4 rounded-xl border-2 ${
                   isActive ? "border-green-500" : "border-neutral-700"
                 }`}
               >
