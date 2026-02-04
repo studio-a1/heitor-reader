@@ -71,6 +71,7 @@ export default function App() {
   /* ================= SANITIZE ================= */
   function sanitizeText(text) {
     return text
+      .replace(/[\[\]\(\)\{\}\*<>]/g, "")
       .replace(/NARRAÇÃO[^.]*\./gi, "")
       .replace(/Segue a transcrição[^.]*\./gi, "")
       .replace(/Página\s+\d+/gi, "")
@@ -155,11 +156,24 @@ export default function App() {
   }
 
   function resumePlayback(index) {
-    if (activeCardId !== index) return;
+  if (activeCardId !== index) return;
+
+  // DESKTOP → mantém o que já funciona
+  if (!isMobile) {
     speechSynthesis.resume();
     setPlayerState("playing");
     setStatusMessage("Retomando leitura…");
+    return;
   }
+
+  // MOBILE → workaround obrigatório
+  speechSynthesis.cancel();
+  setPlayerState("playing");
+  setStatusMessage("Retomando leitura…");
+
+  // retoma exatamente do ponto pausado
+  speakBlock(index);
+}
 
   function rewind(index) {
     if (activeCardId !== index || blockIndexRef.current === 0) return;
