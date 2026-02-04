@@ -166,7 +166,7 @@ export default function App() {
  function resumePlayback(index) {
   if (activeCardId !== index) return;
 
-  // DESKTOP → continua perfeito
+  // DESKTOP → perfeito, não mexe
   if (!isMobile) {
     speechSynthesis.resume();
     setPlayerState("playing");
@@ -174,21 +174,18 @@ export default function App() {
     return;
   }
 
-  // MOBILE → recriar utterance do ponto exato
+  // MOBILE → recriar utterance SEM resetar bloco
   speechSynthesis.cancel();
 
-  const fullBlock = blocksRef.current[blockIndexRef.current];
-  const remainingText = fullBlock.slice(charIndexRef.current);
+  const block = blocksRef.current[blockIndexRef.current];
+  if (!block) return;
 
-  if (!remainingText.trim()) return;
-
-  const u = new SpeechSynthesisUtterance(remainingText);
+  // ⚠️ chave: usar o MESMO bloco, sem reset
+  const u = new SpeechSynthesisUtterance(block);
   utteranceRef.current = u;
 
   u.onend = () => {
     blockIndexRef.current += 1;
-    charIndexRef.current = 0;
-
     if (blockIndexRef.current < blocksRef.current.length) {
       speakBlock(index);
     } else {
