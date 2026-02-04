@@ -167,7 +167,7 @@ export default function App() {
   }
 
   // MOBILE → retomar do ponto exato da pausa
-  speechSynthesis.resume();
+  speechSynthesis.cancel();
 
   setPlayerState("playing");
   setStatusMessage("Retomando leitura…");
