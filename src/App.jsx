@@ -14,42 +14,89 @@ import * as pdfjsLib from "pdfjs-dist/build/pdf";
 import pdfWorker from "pdfjs-dist/build/pdf.worker?url";
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
+import Paywall from "./components/Paywall";
+
 /* ================= CONFIG ================= */
+
 const DAY_MS = 24 * 60 * 60 * 1000;
-const plan = "free";
+
+// ⚠️ plano inicial ANÔNIMO
+const DEFAULT_PLAN = "free";
+
 
 const limits = {
   free: { pages: 3, pdfs: 1 },
   freemium: { pages: 10, pdfs: 5 },
   premium: { pages: Infinity, pdfs: Infinity },
 };
-
 const isMobile =
   typeof navigator !== "undefined" &&
   /Android|iPhone|iPad/i.test(navigator.userAgent);
+  
+  
 
-export default function App() {
-  /* ================= STATE ================= */
+/* ================= APP ================= */
+
+  export default function App() {
+  
+  const [plan, setPlan] = useState(() => {
+  return localStorage.getItem("plan") || DEFAULT_PLAN;
+});
+  const isPremium = plan === "premium";
+  const isFreemium = plan === "freemium";
+useEffect(() => {
+  if (plan === "free") {
+    setStatusMessage("Plano gratuito ativo");
+  }
+
+  if (plan === "freemium") {
+    setStatusMessage("Plano Freemium ativo");
+  }
+
+  if (plan === "premium") {
+    setStatusMessage("Plano Premium ativo");
+  }
+}, [plan]);
+  /* ================= AUTH / PLAN ================= */
+
+  const [isLogged, setIsLogged] = useState(false);
+  const [showPaywall, setShowPaywall] = useState(false);
+
+  /* ================= CONTENT ================= */
+
   const [texts, setTexts] = useState([]);
   const [activeCardId, setActiveCardId] = useState(null);
+
+  /* ================= PLAYER ================= */
+
   const [playerState, setPlayerState] = useState("idle"); // idle | playing | paused
+  const [continuous, setContinuous] = useState(false);
+  const [rewindFlash, setRewindFlash] = useState(false);
+
+  /* ================= UI ================= */
+
   const [statusMessage, setStatusMessage] = useState(
     "Escolha como deseja importar o conteúdo."
   );
   const [loading, setLoading] = useState(false);
-  const [continuous, setContinuous] = useState(false);
-  const [rewindFlash, setRewindFlash] = useState(false);
-  const [isLogged, setIsLogged] = useState(false);
+  /* ================= ACCESSIBILITY ================= */
+
+const [accessibilityMode, setAccessibilityMode] = useState(false);
+const canUseAccessibility =
+  plan === "freemium" || plan === "premium";
 
   /* ================= USAGE ================= */
+
   const [usage, setUsage] = useState(() => {
     const saved = localStorage.getItem("usage");
-    if (!saved)
+    if (!saved) {
       return { pages: 0, pdfs: 0, resetAt: Date.now() + DAY_MS };
+    }
 
     const parsed = JSON.parse(saved);
-    if (Date.now() > parsed.resetAt)
+    if (Date.now() > parsed.resetAt) {
       return { pages: 0, pdfs: 0, resetAt: Date.now() + DAY_MS };
+    }
 
     return parsed;
   });
@@ -62,14 +109,45 @@ export default function App() {
     setUsage((u) => ({ ...u, [type]: u[type] + 1 }));
   }
 
+  /* ================= BACKEND SYNC ================= */
+
+  // 🔑 quando loga, backend vira fonte da verdade
+  useEffect(() => {
+  if (!isLogged) return;
+
+  fetch("/.netlify/functions/me")
+    .then((r) => r.json())
+    .then((data) => {
+      setPlan(data.plan);
+      setUsage(data.usage);
+      setStatusMessage("Plano atualizado com sucesso");
+    })
+    .catch(() => {
+      setPlan("freemium");
+      setStatusMessage("Plano freemium ativo");
+    });
+}, [isLogged]);
+
+  /* ================= PERMISSION ENGINE ================= */
+
+  function canImport(type) {
+    const limit = limits[plan][type];
+    const used = usage[type];
+
+    if (limit === Infinity) return true;
+    return used < limit;
+  }
+
   /* ================= REFS ================= */
+
   const utteranceRef = useRef(null);
   const blocksRef = useRef([]);
   const blockIndexRef = useRef(0);
   const warmedUpRef = useRef(false);
   const charIndexRef = useRef(0);
 
-  /* ================= SANITIZE ================= */
+  /* ================= TEXT ================= */
+
   function sanitizeText(text) {
     return text
       .replace(/[\[\]\(\)\{\}\*<>]/g, "")
@@ -94,11 +172,13 @@ export default function App() {
         current = s + " ";
       }
     }
+
     if (current.trim()) blocks.push(current.trim());
     return blocks;
   }
 
   /* ================= VOICE ================= */
+
   function warmUpVoice() {
     if (warmedUpRef.current) return;
     const u = new SpeechSynthesisUtterance(" ");
@@ -106,19 +186,42 @@ export default function App() {
     speechSynthesis.speak(u);
     warmedUpRef.current = true;
   }
+  function getVoiceSettings() {
+  if (plan === "premium") {
+    return {
+      rate: isMobile ? 0.9 : 0.85,
+      pitch: 0.95,
+      volume: 1,
+    };
+  }
+
+  return {
+    rate: 1,
+    pitch: 1,
+    volume: 1,
+  };
+}
+
 
   function speakBlock(cardIndex) {
     const block = blocksRef.current[blockIndexRef.current];
     if (!block) return;
-
     const u = new SpeechSynthesisUtterance(block);
-    utteranceRef.current = u;
+    const voiceSettings = getVoiceSettings();
+u.rate = voiceSettings.rate;
+u.pitch = voiceSettings.pitch;
+u.volume = voiceSettings.volume;
     
+    utteranceRef.current = u;
+  // 🎧 acessibilidade 60+ (audível de verdade)
+u.rate = accessibilityMode ? 0.7 : 1;
+u.pitch = accessibilityMode ? 0.9 : 1;
+
     u.onboundary = (e) => {
-  if (e.name === "word") {
-    charIndexRef.current = e.charIndex;
-  }
-};
+      if (e.name === "word") {
+        charIndexRef.current = e.charIndex;
+      }
+    };
 
     u.onstart = () => {
       setPlayerState("playing");
@@ -141,7 +244,8 @@ export default function App() {
     speechSynthesis.speak(u);
   }
 
-  /* ================= PLAYER ================= */
+  /* ================= PLAYER CONTROLS ================= */
+
   function playFromStart(index) {
     warmUpVoice();
     speechSynthesis.cancel();
@@ -156,48 +260,43 @@ export default function App() {
   }
 
   function pausePlayback(index) {
-  if (activeCardId !== index) return;
-
-  speechSynthesis.pause();
-  setPlayerState("paused");
-  setStatusMessage("Leitura pausada");
-}
-
- function resumePlayback(index) {
-  if (activeCardId !== index) return;
-
-  // DESKTOP → perfeito, não mexe
-  if (!isMobile) {
-    speechSynthesis.resume();
-    setPlayerState("playing");
-    setStatusMessage("Retomando leitura…");
-    return;
+    if (activeCardId !== index) return;
+    speechSynthesis.pause();
+    setPlayerState("paused");
+    setStatusMessage("Leitura pausada");
   }
 
-  // MOBILE → recriar utterance SEM resetar bloco
-  speechSynthesis.cancel();
+  function resumePlayback(index) {
+    if (activeCardId !== index) return;
 
-  const block = blocksRef.current[blockIndexRef.current];
-  if (!block) return;
-
-  // ⚠️ chave: usar o MESMO bloco, sem reset
-  const u = new SpeechSynthesisUtterance(block);
-  utteranceRef.current = u;
-
-  u.onend = () => {
-    blockIndexRef.current += 1;
-    if (blockIndexRef.current < blocksRef.current.length) {
-      speakBlock(index);
-    } else {
-      stopPlayback();
+    if (!isMobile) {
+      speechSynthesis.resume();
+      setPlayerState("playing");
+      setStatusMessage("Retomando leitura…");
+      return;
     }
-  };
 
-  speechSynthesis.speak(u);
+    speechSynthesis.cancel();
 
-  setPlayerState("playing");
-  setStatusMessage("Retomando leitura…");
-}
+    const block = blocksRef.current[blockIndexRef.current];
+    if (!block) return;
+
+    const u = new SpeechSynthesisUtterance(block);
+    utteranceRef.current = u;
+
+    u.onend = () => {
+      blockIndexRef.current += 1;
+      if (blockIndexRef.current < blocksRef.current.length) {
+        speakBlock(index);
+      } else {
+        stopPlayback();
+      }
+    };
+
+    speechSynthesis.speak(u);
+    setPlayerState("playing");
+    setStatusMessage("Retomando leitura…");
+  }
 
   function rewind(index) {
     if (activeCardId !== index || blockIndexRef.current === 0) return;
@@ -218,8 +317,16 @@ export default function App() {
     setActiveCardId(null);
   }
 
-  /* ================= IMAGE ================= */
+  /* ================= IMPORTS (GUARDED) ================= */
+
   async function handleImageUpload(e) {
+    if (!canImport("pages")) {
+      setStatusMessage("Limite do plano atingido");
+      setShowPaywall(true);
+      e.target.value = "";
+      return;
+    }
+
     const file = e.target.files[0];
     if (!file) return;
 
@@ -244,8 +351,14 @@ export default function App() {
     }
   }
 
-  /* ================= PDF ================= */
   async function handlePdfUpload(e) {
+    if (!canImport("pdfs")) {
+      setStatusMessage("Limite do plano atingido");
+      setShowPaywall(true);
+      e.target.value = "";
+      return;
+    }
+
     const file = e.target.files[0];
     if (!file) return;
 
@@ -272,13 +385,60 @@ export default function App() {
   }
 
   /* ================= UI ================= */
-  return (
-    <div className="min-h-screen bg-neutral-900 text-neutral-200 p-4">
-      <div className="max-w-6xl mx-auto bg-neutral-800 rounded-2xl p-6 space-y-6">
-        <header className="text-center">
-          <h1 className="text-2xl font-semibold">Heitor Reader</h1>
-          <p className="text-sm opacity-70">Leitura assistida</p>
-        </header>
+
+ return (
+  <div
+  className={`
+    min-h-screen text-neutral-200 p-4 transition-colors duration-500
+    ${isPremium ? "bg-neutral-800" : ""}
+    ${isFreemium ? "bg-neutral-900/95" : ""}
+    ${!isFreemium && !isPremium ? "bg-neutral-900" : ""}
+  `}
+>
+     <div
+  className={`max-w-6xl mx-auto rounded-2xl p-6 space-y-6 transition-all
+    ${
+      isPremium
+        ? "bg-neutral-500 text-neutral-950 shadow-xl"
+        : isFreemium
+        ? "bg-neutral-800 text-neutral-100"
+        : "bg-neutral-800 text-neutral-200"
+    }
+    ${accessibilityMode ? "text-lg leading-relaxed" : ""}
+  `}
+>
+
+       <header className="text-center">
+  <h1 className="text-2xl font-semibold">Heitor Reader</h1>
+  <p className="text-sm opacity-70">Leitura assistida</p>
+  
+  {isPremium && (
+  <div className="text-xs text-amber-600 font-semibold tracking-wide">
+    👑 PREMIUM ATIVO
+  </div>
+)}
+
+{isFreemium && (
+  <div className="text-xs text-cyan-400 font-medium tracking-wide">
+    ⭐ FREEMIUM
+  </div>
+)}
+
+  {canUseAccessibility && (
+    <button
+      onClick={() => setAccessibilityMode((v) => !v)}
+      className={`mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm border transition
+        ${
+          accessibilityMode
+            ? "bg-amber-700 border-amber-400 text-white"
+            : "bg-neutral-700 border-neutral-600 text-neutral-200"
+        }`}
+    >
+      👵 Modo acessível 60+
+    </button>
+  )}
+</header>
+
 
         <div className="text-center text-cyan-400 text-sm min-h-[20px]">
           {loading ? "Processando…" : statusMessage}
@@ -319,12 +479,20 @@ export default function App() {
           {texts.map((text, i) => {
             const isActive = activeCardId === i;
             return (
-              <div
-                key={i}
-                className={`min-w-[280px] bg-neutral-900 p-4 rounded-xl border-2 ${
-                  isActive ? "border-green-500" : "border-neutral-700"
-                }`}
-              >
+             <div
+  key={i}
+  className={`
+  min-w-[280px] p-4 rounded-xl border-2 transition-all
+  ${
+    isPremium
+      ? "bg-white text-neutral-900 border-amber-300"
+      : isFreemium
+      ? "bg-neutral-800 text-neutral-100 border-cyan-500/40"
+      : "bg-neutral-900 text-neutral-200 border-neutral-700"
+  }
+  ${isActive ? "ring-2 ring-green-400" : ""}
+`}
+>
                 <div className="flex justify-between mb-2 text-sm">
                   <span>Página {i + 1}</span>
 
@@ -360,9 +528,18 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="text-xs max-h-40 overflow-y-auto whitespace-pre-wrap">
-                  {text}
-                </div>
+<div
+  className={`
+    overflow-y-auto whitespace-pre-wrap transition-all
+    ${
+      accessibilityMode
+        ? "text-base leading-relaxed max-h-60"
+        : "text-xs max-h-40"
+    }
+  `}
+>
+  {text}
+</div>
               </div>
             );
           })}
@@ -381,11 +558,39 @@ export default function App() {
         )}
       </div>
 
-      <footer className="text-center text-xs text-neutral-400 mt-4">
-        Plano: <span className="text-neutral-200">{plan}</span> • Uso hoje:{" "}
-        {usage.pages}/{limits[plan].pages} imagens • {usage.pdfs}/
-        {limits[plan].pdfs} PDFs
-      </footer>
+      <footer className="text-center text-xs mt-4">
+  <span
+    className={
+      isPremium
+        ? "text-amber-700 font-semibold"
+        : isFreemium
+        ? "text-cyan-400"
+        : "text-neutral-400"
+    }
+  >
+    Plano: {plan}
+  </span>
+  {" • "}
+  Uso hoje: {usage.pages}/{limits[plan].pages} imagens •{" "}
+  {usage.pdfs}/{limits[plan].pdfs} PDFs
+</footer>
+
+     {showPaywall && (
+  <Paywall
+    onClose={() => setShowPaywall(false)}
+    onSelectPlan={(selectedPlan) => {
+      setPlan(selectedPlan);
+      setShowPaywall(false);
+
+      setStatusMessage(
+        selectedPlan === "premium"
+          ? "Plano Premium ativo"
+          : "Plano Freemium ativo"
+      );
+    }}
+  />
+)}
+
     </div>
   );
 }
