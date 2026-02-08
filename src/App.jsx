@@ -42,21 +42,11 @@ const isMobile =
   const [plan, setPlan] = useState(() => {
   return localStorage.getItem("plan") || DEFAULT_PLAN;
 });
+const safePlan = plan && limits[plan] ? plan : "free";
+const [authChecked, setAuthChecked] = useState(true);
   const isPremium = plan === "premium";
   const isFreemium = plan === "freemium";
-useEffect(() => {
-  if (plan === "free") {
-    setStatusMessage("Plano gratuito ativo");
-  }
 
-  if (plan === "freemium") {
-    setStatusMessage("Plano Freemium ativo");
-  }
-
-  if (plan === "premium") {
-    setStatusMessage("Plano Premium ativo");
-  }
-}, [plan]);
   /* ================= AUTH / PLAN ================= */
 
   const [isLogged, setIsLogged] = useState(false);
@@ -112,22 +102,27 @@ const canUseAccessibility =
   /* ================= BACKEND SYNC ================= */
 
   // 🔑 quando loga, backend vira fonte da verdade
-  useEffect(() => {
-  if (!isLogged) return;
+ useEffect(() => {
+  if (!isLogged) {
+    setPlan("free");
+    return;
+  }
+
+  setAuthChecked(false);
 
   fetch("/.netlify/functions/me")
     .then((r) => r.json())
     .then((data) => {
       setPlan(data.plan);
       setUsage(data.usage);
-      setStatusMessage("Plano atualizado com sucesso");
     })
     .catch(() => {
       setPlan("freemium");
-      setStatusMessage("Plano freemium ativo");
+    })
+    .finally(() => {
+      setAuthChecked(true);
     });
 }, [isLogged]);
-
   /* ================= PERMISSION ENGINE ================= */
 
   function canImport(type) {
@@ -385,7 +380,13 @@ u.pitch = accessibilityMode ? 0.9 : 1;
   }
 
   /* ================= UI ================= */
-
+if (!authChecked) {
+  return (
+    <div className="min-h-screen flex items-center justify-center text-neutral-400">
+      Verificando plano…
+    </div>
+  );
+}
  return (
   <div
   className={`
