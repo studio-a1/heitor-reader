@@ -346,38 +346,17 @@ u.pitch = accessibilityMode ? 0.9 : 1;
     }
   }
 
-  async function handlePdfUpload(e) {
-    if (!canImport("pdfs")) {
-      setStatusMessage("Limite do plano atingido");
-      setShowPaywall(true);
-      e.target.value = "";
-      return;
-    }
+  async function handlePdfUpload(e) { if (!canImport("pdfs")) { setStatusMessage("Limite do plano atingido"); setShowPaywall(true); e.target.value = ""; return; } const file = e.target.files[0]; if (!file) return; setLoading(true); try { const buffer = await file.arrayBuffer(); const pdf = await pdfjsLib .getDocument({ data: new Uint8Array(buffer) }) .promise; let fullText = ""; for (let i = 1; i <= pdf.numPages; i++) { const page = await pdf.getPage(i); const content = await page.getTextContent(); let pageText = content.items
+  .map((i) => i.str)
+  .join(" ")
+  .replace(/\s+/g, " ")
+  .replace(/([a-zà-ú])\s+([A-ZÀ-Ú])/g, "$1. $2");
 
-    const file = e.target.files[0];
-    if (!file) return;
+if (!/[.!?]$/.test(pageText.trim())) {
+  pageText += ".";
+}
 
-    setLoading(true);
-    try {
-      const buffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib
-        .getDocument({ data: new Uint8Array(buffer) })
-        .promise;
-
-      let fullText = "";
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const content = await page.getTextContent();
-        fullText += content.items.map((i) => i.str).join(" ") + "\n";
-      }
-
-      setTexts((p) => [...p, sanitizeText(fullText)]);
-      incrementUsage("pdfs");
-    } finally {
-      setLoading(false);
-      e.target.value = "";
-    }
-  }
+fullText += pageText + "\n"; } setTexts((p) => [...p, sanitizeText(fullText)]); incrementUsage("pdfs"); } finally { setLoading(false); e.target.value = ""; } }
 
   /* ================= UI ================= */
 if (!authChecked) {
@@ -595,3 +574,4 @@ if (!authChecked) {
     </div>
   );
 }
+
