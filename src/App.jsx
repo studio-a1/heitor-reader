@@ -10,9 +10,10 @@ import {
   ArrowRightOnRectangleIcon,
 } from "@heroicons/react/24/outline";
 
-import * as pdfjsLib from "pdfjs-dist/build/pdf";
-import pdfWorker from "pdfjs-dist/build/pdf.worker?url";
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
+import * as pdfjsLib from "pdfjs-dist";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
 import Paywall from "./components/Paywall";
 
@@ -143,34 +144,42 @@ const canUseAccessibility =
 
   /* ================= TEXT ================= */
 
-  function sanitizeText(text) {
-    return text
-      .replace(/[\[\]\(\)\{\}\*<>]/g, "")
-      .replace(/NARRAÇÃO[^.]*\./gi, "")
-      .replace(/Segue a transcrição[^.]*\./gi, "")
-      .replace(/Página\s+\d+/gi, "")
-      .replace(/IA[^.]*\./gi, "")
-      .replace(/\s{2,}/g, " ")
-      .trim();
-  }
+ function sanitizeText(text) {
+  return text
+    // remove caracteres realmente problemáticos
+    .replace(/[\[\]\(\)\{\}\*<>]/g, "")
+
+    // remove APENAS linhas explícitas, não blocos
+    .replace(/^NARRAÇÃO.*$/gim, "")
+    .replace(/^Segue a transcrição.*$/gim, "")
+    .replace(/^IA.*$/gim, "")
+
+    // remove marcador de página isolado
+    .replace(/^\s*Página\s+\d+\s*$/gim, "")
+
+    // normaliza espaços SEM destruir layout
+    .replace(/[ \t]{2,}/g, " ")
+
+    .trim();
+}
 
   function splitIntoBlocks(text, maxLength = 600) {
-    const sentences = text.split(/(?<=[.!?])\s+/);
-    const blocks = [];
-    let current = "";
+  const lines = text.split(/\n+/);
+  const blocks = [];
+  let current = "";
 
-    for (const s of sentences) {
-      if ((current + s).length <= maxLength) {
-        current += s + " ";
-      } else {
-        blocks.push(current.trim());
-        current = s + " ";
-      }
+  for (const line of lines) {
+    if ((current + line).length <= maxLength) {
+      current += line + "\n";
+    } else {
+      blocks.push(current.trim());
+      current = line + "\n";
     }
-
-    if (current.trim()) blocks.push(current.trim());
-    return blocks;
   }
+
+  if (current.trim()) blocks.push(current.trim());
+  return blocks;
+}
 
   /* ================= VOICE ================= */
 
@@ -346,17 +355,82 @@ u.pitch = accessibilityMode ? 0.9 : 1;
     }
   }
 
-  async function handlePdfUpload(e) { if (!canImport("pdfs")) { setStatusMessage("Limite do plano atingido"); setShowPaywall(true); e.target.value = ""; return; } const file = e.target.files[0]; if (!file) return; setLoading(true); try { const buffer = await file.arrayBuffer(); const pdf = await pdfjsLib .getDocument({ data: new Uint8Array(buffer) }) .promise; let fullText = ""; for (let i = 1; i <= pdf.numPages; i++) { const page = await pdf.getPage(i); const content = await page.getTextContent(); let pageText = content.items
-  .map((i) => i.str)
-  .join(" ")
-  .replace(/\s+/g, " ")
-  .replace(/([a-zà-ú])\s+([A-ZÀ-Ú])/g, "$1. $2");
 
-if (!/[.!?]$/.test(pageText.trim())) {
-  pageText += ".";
+async function handlePdfUpload(e) {
+  try {
+    if (!e || !e.target || !e.target.files?.[0]) {
+      throw new Error("Evento de upload inválido");
+    }
+
+    if (!canImport("pdfs")) {
+      setStatusMessage("Limite do plano atingido");
+      setShowPaywall(true);
+      e.target.value = "";
+      return;
+    }
+
+    const file = e.target.files[0];
+    setLoading(true);
+
+    const buffer = await file.arrayBuffer();
+
+    const pdf = await pdfjsLib.getDocument({
+      data: new Uint8Array(buffer),
+    }).promise;
+
+    for (let i = 1; i <= pdf.numPages; i++) {
+      if (!canImport("pages")) break;
+
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({ scale: 2 });
+
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+
+      await page.render({
+        canvasContext: ctx,
+        viewport,
+      }).promise;
+
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob((b) => {
+          if (!b) reject(new Error("Falha ao gerar imagem da página"));
+          else resolve(b);
+        }, "image/png");
+      });
+
+      const formData = new FormData();
+      formData.append("image", blob, `page-${i}.png`);
+
+      const res = await fetch("/.netlify/functions/ocr", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        throw new Error(`OCR falhou na página ${i}`);
+      }
+
+      const data = await res.json();
+
+      if (data.text && data.text.trim().length > 10) {
+        setTexts((prev) => [...prev, data.text]);
+        incrementUsage("pages");
+      }
+    }
+
+    incrementUsage("pdfs");
+  } catch (err) {
+    console.error("PDF ERROR REAL:", err);
+    setError(err.message || String(err));
+  } finally {
+    setLoading(false);
+    if (e?.target) e.target.value = "";
+  }
 }
-
-fullText += pageText + "\n"; } setTexts((p) => [...p, sanitizeText(fullText)]); incrementUsage("pdfs"); } finally { setLoading(false); e.target.value = ""; } }
 
   /* ================= UI ================= */
 if (!authChecked) {

@@ -12,12 +12,14 @@
   "dependencies": {
     "@heroicons/react": "^2.2.0",
     "busboy": "^1.6.0",
+    "formidable": "^3.5.4",
     "heroicons": "^2.2.0",
     "lucide-react": "^0.563.0",
     "mammoth": "^1.11.0",
     "netlify": "^23.14.0",
     "openai": "^6.16.0",
-    "pdfjs-dist": "^5.4.530",
+    "pdf-poppler": "^0.2.3",
+    "pdfjs-dist": "^3.11.174",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

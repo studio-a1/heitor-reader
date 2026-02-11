@@ -1,9 +1,10 @@
-
 import OpenAI from "openai";
 import Busboy from "busboy";
 
 export const handler = async (event) => {
-  console.log("OCR function invoked");
+  if (event.httpMethod !== "POST") {
+    return { statusCode: 405, body: "Method Not Allowed" };
+  }
 
   if (!process.env.OPENAI_API_KEY) {
     return {
@@ -17,18 +18,16 @@ export const handler = async (event) => {
   });
 
   return new Promise((resolve) => {
-    const busboy = Busboy({
-      headers: event.headers
-    });
+    const busboy = Busboy({ headers: event.headers });
 
     let imageBuffer = null;
-    let mimeType = "image/jpeg";
+    let mimeType = "image/png";
 
     busboy.on("file", (_, file, info) => {
       const chunks = [];
-      mimeType = info.mimeType || "image/jpeg";
+      mimeType = info.mimeType || "image/png";
 
-      file.on("data", (data) => chunks.push(data));
+      file.on("data", (d) => chunks.push(d));
       file.on("end", () => {
         imageBuffer = Buffer.concat(chunks);
       });
@@ -54,7 +53,7 @@ export const handler = async (event) => {
               content: [
                 {
                   type: "input_text",
-                  text: "Transcreva todo o texto da imagem em português."
+                  text: "Transcreva fielmente todo o texto da imagem, preservando títulos, sumários, listas e quebras de linha."
                 },
                 {
                   type: "input_image",
@@ -86,4 +85,3 @@ export const handler = async (event) => {
     busboy.end(Buffer.from(event.body, "base64"));
   });
 };
-
