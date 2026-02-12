@@ -26,9 +26,9 @@ const DEFAULT_PLAN = "free";
 
 
 const limits = {
-  free: { pages: 3, pdfs: 1 },
-  freemium: { pages: 10, pdfs: 5 },
-  premium: { pages: Infinity, pdfs: Infinity },
+  free: { pages: 30 },
+  freemium: { pages: 300 },
+  premium: { pages: 1500 },
 };
 const isMobile =
   typeof navigator !== "undefined" &&
@@ -37,6 +37,17 @@ const isMobile =
   
 
 /* ================= APP ================= */
+function getNextMonthlyReset() {
+  const now = new Date();
+  const next = new Date(
+    now.getFullYear(),
+    now.getMonth() + 1,
+    now.getDate()
+  );
+  return next.getTime();
+}
+
+
 
   export default function App() {
   
@@ -81,13 +92,13 @@ const canUseAccessibility =
   const [usage, setUsage] = useState(() => {
     const saved = localStorage.getItem("usage");
     if (!saved) {
-      return { pages: 0, pdfs: 0, resetAt: Date.now() + DAY_MS };
+      return { pages: 0, pdfs: 0, resetAt: getNextMonthlyReset() };
     }
 
     const parsed = JSON.parse(saved);
     if (Date.now() > parsed.resetAt) {
-      return { pages: 0, pdfs: 0, resetAt: Date.now() + DAY_MS };
-    }
+  return { pages: 0, pdfs: 0, resetAt: getNextMonthlyReset() };
+}
 
     return parsed;
   });
@@ -127,12 +138,16 @@ const canUseAccessibility =
   /* ================= PERMISSION ENGINE ================= */
 
   function canImport(type) {
-    const limit = limits[plan][type];
-    const used = usage[type];
+  const currentPlan = limits[plan] ? plan : "free";
 
-    if (limit === Infinity) return true;
-    return used < limit;
-  }
+  const limit = limits[currentPlan][type];
+  const used = usage[type] ?? 0;
+
+  if (limit === Infinity) return true;
+  if (limit === undefined) return true;
+
+  return used < limit;
+}
 
   /* ================= REFS ================= */
 
@@ -153,6 +168,8 @@ const canUseAccessibility =
     .replace(/^NARRAÇÃO.*$/gim, "")
     .replace(/^Segue a transcrição.*$/gim, "")
     .replace(/^IA.*$/gim, "")
+    .replace(/^[A-ZÁÀÂÃÉÈÍÓÔÕÚÇ\s]{5,}$/gm, "")
+    .replace(/^\s*.+\s+\|\s+Página\s+\d+\s*$/gim, "")
 
     // remove marcador de página isolado
     .replace(/^\s*Página\s+\d+\s*$/gim, "")
@@ -162,7 +179,39 @@ const canUseAccessibility =
 
     .trim();
 }
+useEffect(() => {
+  if (texts.length < 3) return; // precisa de volume mínimo
 
+  const firstLines = texts.map((t) => {
+    const lines = t.split("\n").map(l => l.trim()).filter(Boolean);
+    return lines[0] || "";
+  });
+
+  const frequency = {};
+  firstLines.forEach((line) => {
+    if (!line) return;
+    frequency[line] = (frequency[line] || 0) + 1;
+  });
+
+  const threshold = Math.ceil(texts.length * 0.6);
+
+  const repeatedHeaders = Object.entries(frequency)
+    .filter(([_, count]) => count >= threshold)
+    .map(([line]) => line);
+
+  if (repeatedHeaders.length === 0) return;
+
+  setTexts((prev) =>
+    prev.map((text) => {
+      let cleaned = text;
+      repeatedHeaders.forEach((header) => {
+        const regex = new RegExp("^" + header.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "m");
+        cleaned = cleaned.replace(regex, "").trim();
+      });
+      return cleaned;
+    })
+  );
+}, [texts.length]);
   function splitIntoBlocks(text, maxLength = 600) {
   const lines = text.split(/\n+/);
   const blocks = [];
@@ -417,7 +466,7 @@ async function handlePdfUpload(e) {
       const data = await res.json();
 
       if (data.text && data.text.trim().length > 10) {
-        setTexts((prev) => [...prev, data.text]);
+        setTexts((prev) => [...prev, sanitizeText(data.text)]);
         incrementUsage("pages");
       }
     }
@@ -503,7 +552,13 @@ if (!authChecked) {
           <label className="w-36 h-28 bg-green-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
             <CameraIcon className="h-8 w-8" />
             <span>Scanner</span>
-            <input hidden type="file" accept="image/*" onChange={handleImageUpload} />
+            <input
+  hidden
+  type="file"
+  accept="image/*"
+  capture="environment"
+  onChange={handleImageUpload}
+/>
           </label>
 
           <label className="w-36 h-28 bg-cyan-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
@@ -625,7 +680,7 @@ if (!authChecked) {
     Plano: {plan}
   </span>
   {" • "}
-  Uso hoje: {usage.pages}/{limits[plan].pages} imagens •{" "}
+ Uso hoje: {usage.pages}/{limits[safePlan].pages} imagens •{" "}
   {usage.pdfs}/{limits[plan].pdfs} PDFs
 </footer>
 
