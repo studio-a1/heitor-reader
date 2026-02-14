@@ -35,8 +35,12 @@ const isMobile =
   /Android|iPhone|iPad/i.test(navigator.userAgent);
   
   
+  
+
 
 /* ================= APP ================= */
+
+
 function getNextMonthlyReset() {
   const now = new Date();
   const next = new Date(
@@ -46,7 +50,9 @@ function getNextMonthlyReset() {
   );
   return next.getTime();
 }
-
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 
   export default function App() {
@@ -152,12 +158,69 @@ const canUseAccessibility =
   /* ================= REFS ================= */
 
   const utteranceRef = useRef(null);
-  const blocksRef = useRef([]);
-  const blockIndexRef = useRef(0);
-  const warmedUpRef = useRef(false);
-  const charIndexRef = useRef(0);
+const blocksRef = useRef([]);
+const blockIndexRef = useRef(0);
+const warmedUpRef = useRef(false);
+const charIndexRef = useRef(0);
+const abortProcessingRef = useRef(false);
+
+const headerCandidatesRef = useRef({});
+const footerCandidatesRef = useRef({});
+const learnedHeadersRef = useRef([]);
+const learnedFootersRef = useRef([]);
 
   /* ================= TEXT ================= */
+  
+  function learnRepeatedPatterns(text) {
+  if (!text) return;
+
+  const normalized = text.replace(/\s+/g, " ").trim();
+
+  const startSlice = normalized.slice(0, 120);
+  const endSlice = normalized.slice(-120);
+
+  headerCandidatesRef.current[startSlice] =
+    (headerCandidatesRef.current[startSlice] || 0) + 1;
+
+  footerCandidatesRef.current[endSlice] =
+    (footerCandidatesRef.current[endSlice] || 0) + 1;
+}
+
+function finalizeLearnedPatterns(totalPages) {
+  const threshold = Math.ceil(totalPages * 0.6);
+
+  learnedHeadersRef.current = Object.entries(headerCandidatesRef.current)
+    .filter(([_, count]) => count >= threshold)
+    .map(([text]) => text);
+
+  learnedFootersRef.current = Object.entries(footerCandidatesRef.current)
+    .filter(([_, count]) => count >= threshold)
+    .map(([text]) => text);
+}
+
+function removeLearnedPatterns(text) {
+  if (!text) return text;
+
+  const normalized = text.replace(/\s+/g, " ").trim();
+
+  if (/^\d+$/.test(normalized)) return "";
+
+  let cleaned = text;
+
+  learnedHeadersRef.current.forEach(pattern => {
+    if (pattern.length > 10) {
+      cleaned = cleaned.replace(pattern, "");
+    }
+  });
+
+  learnedFootersRef.current.forEach(pattern => {
+    if (pattern.length > 10) {
+      cleaned = cleaned.replace(pattern, "");
+    }
+  });
+
+  return cleaned.trim();
+}
 
  function sanitizeText(text) {
   return text
@@ -406,20 +469,15 @@ u.pitch = accessibilityMode ? 0.9 : 1;
 
 
 async function handlePdfUpload(e) {
-  try {
-    if (!e || !e.target || !e.target.files?.[0]) {
-      throw new Error("Evento de upload inválido");
-    }
+  abortProcessingRef.current = false;
 
-    if (!canImport("pdfs")) {
-      setStatusMessage("Limite do plano atingido");
-      setShowPaywall(true);
-      e.target.value = "";
-      return;
-    }
+  try {
+    if (!e?.target?.files?.[0]) return;
 
     const file = e.target.files[0];
+
     setLoading(true);
+    setStatusMessage("Preparando PDF...");
 
     const buffer = await file.arrayBuffer();
 
@@ -428,7 +486,20 @@ async function handlePdfUpload(e) {
     }).promise;
 
     for (let i = 1; i <= pdf.numPages; i++) {
-      if (!canImport("pages")) break;
+
+      if (abortProcessingRef.current) {
+        setStatusMessage("Processamento cancelado.");
+        break;
+      }
+
+      if (!canImport("pages")) {
+        setStatusMessage("Limite mensal atingido.");
+        setShowPaywall(true);
+        break;
+      }
+
+      setStatusMessage(`Processando página ${i} de ${pdf.numPages}`);
+      await sleep(0);
 
       const page = await pdf.getPage(i);
       const viewport = page.getViewport({ scale: 2 });
@@ -446,7 +517,7 @@ async function handlePdfUpload(e) {
 
       const blob = await new Promise((resolve, reject) => {
         canvas.toBlob((b) => {
-          if (!b) reject(new Error("Falha ao gerar imagem da página"));
+          if (!b) reject(new Error("Falha ao gerar imagem"));
           else resolve(b);
         }, "image/png");
       });
@@ -459,22 +530,40 @@ async function handlePdfUpload(e) {
         body: formData,
       });
 
-      if (!res.ok) {
-        throw new Error(`OCR falhou na página ${i}`);
-      }
+      if (!res.ok) throw new Error("Erro no OCR");
 
       const data = await res.json();
+      
+      console.log("---- TEXTO BRUTO PÁGINA ----");
+console.log(data.text);
 
-      if (data.text && data.text.trim().length > 10) {
-        setTexts((prev) => [...prev, sanitizeText(data.text)]);
-        incrementUsage("pages");
+      if (!data.text) continue;
+
+      // 🔹 Aprende padrões nas 5 primeiras páginas
+      if (i <= 5) {
+        learnRepeatedPatterns(data.text);
+        if (i === 5) {
+          finalizeLearnedPatterns(5);
+        }
       }
+
+      // 🔹 Remove cabeçalho / rodapé
+      let cleanText = removeLearnedPatterns(data.text);
+      cleanText = sanitizeText(cleanText);
+
+      // 🔹 Ignora páginas vazias ou lixo
+      if (!cleanText || cleanText.trim().length < 30) {
+        console.log(`Página ${i} ignorada por estar vazia ou insuficiente.`);
+        continue;
+      }
+
+      setTexts(prev => [...prev, cleanText]);
+      incrementUsage("pages");
     }
 
-    incrementUsage("pdfs");
   } catch (err) {
-    console.error("PDF ERROR REAL:", err);
-    setError(err.message || String(err));
+    console.error("PDF ERROR:", err);
+    setStatusMessage("Erro ao processar PDF.");
   } finally {
     setLoading(false);
     if (e?.target) e.target.value = "";
@@ -545,6 +634,17 @@ if (!authChecked) {
 
         <div className="text-center text-cyan-400 text-sm min-h-[20px]">
           {loading ? "Processando…" : statusMessage}
+          
+      {loading && (
+  <button
+    onClick={() => {
+      abortProcessingRef.current = true;
+    }}
+    className="ml-3 bg-red-600 px-3 py-1 rounded text-white text-xs"
+  >
+    Cancelar
+  </button>
+)}
         </div>
 
         {/* IMPORT */}
@@ -680,8 +780,8 @@ if (!authChecked) {
     Plano: {plan}
   </span>
   {" • "}
- Uso hoje: {usage.pages}/{limits[safePlan].pages} imagens •{" "}
-  {usage.pdfs}/{limits[plan].pdfs} PDFs
+ Uso no mês: {usage.pages}/{limits[plan]?.pages ?? 0} páginas
+  
 </footer>
 
      {showPaywall && (
