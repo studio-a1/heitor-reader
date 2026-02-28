@@ -586,7 +586,7 @@ async function refreshUserData() {
 
   return updatedUsage;
 }
-//🔐 FUNÇÃO GLOBAL DE VALIDAÇÃO (NOVA)//
+//🔐 FUNÇÃO GLOBAL DE VALIDAÇÃO (NOVA) e teste//
 async function validateBeforeScan() {
   const { data: { session } } = await supabase.auth.getSession();
 
