@@ -181,20 +181,23 @@ useEffect(() => {
   if (!user) return;
 
   async function ensureUsageRow() {
-    const { data } = await supabase
-      .from("usage")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
+    const { data, error } = await supabase
+  .from("usage")
+  .select("id")
+  .eq("user_id", user.id)
+  .maybeSingle();
 
-    if (!data) {
-      await supabase
-        .from("usage")
-        .insert({
-          user_id: user.id,
-          pages: 0,
-        });
-    }
+if (error) {
+  console.error("Erro ao verificar usage:", error);
+  return;
+}
+
+if (!data) {
+  await supabase.from("usage").insert({
+    user_id: user.id,
+    pages: 0,
+  });
+}
   }
 
   ensureUsageRow();
