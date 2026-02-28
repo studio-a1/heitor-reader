@@ -1,3 +1,4 @@
+import { supabase } from "./lib/supabase";
 import { useEffect, useRef, useState } from "react";
 import {
   PlayIcon,
@@ -17,6 +18,8 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 
 import Paywall from "./components/Paywall";
 
+import { createClient } from "@supabase/supabase-js";
+
 /* ================= CONFIG ================= */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -24,22 +27,27 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // ⚠️ plano inicial ANÔNIMO
 const DEFAULT_PLAN = "free";
 
-
 const limits = {
-  free: { pages: 30 },
-  freemium: { pages: 300 },
-  premium: { pages: 1500 },
+  free: {
+    daily: 2,
+    monthly: 60,
+  },
+  freemium: {
+    daily: 20,
+    monthly: 300,
+  },
+  premium: {
+    daily: Infinity,
+    monthly: 1500,
+  },
 };
+
 const isMobile =
   typeof navigator !== "undefined" &&
   /Android|iPhone|iPad/i.test(navigator.userAgent);
   
-  
-  
-
 
 /* ================= APP ================= */
-
 
 function getNextMonthlyReset() {
   const now = new Date();
@@ -52,23 +60,146 @@ function getNextMonthlyReset() {
 }
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-
-  export default function App() {
   
-  const [plan, setPlan] = useState(() => {
-  return localStorage.getItem("plan") || DEFAULT_PLAN;
-});
-const safePlan = plan && limits[plan] ? plan : "free";
-const [authChecked, setAuthChecked] = useState(true);
-  const isPremium = plan === "premium";
-  const isFreemium = plan === "freemium";
+  
+}
+export default function App() {
 
-  /* ================= AUTH / PLAN ================= */
+  // ================= AUTH STATES =================
+  const [user, setUser] = useState(null);
+  const [plan, setPlan] = useState(DEFAULT_PLAN);
+  const [usage, setUsage] = useState({ daily: 0, monthly: 0 });
+  const [authChecked, setAuthChecked] = useState(false);
 
-  const [isLogged, setIsLogged] = useState(false);
+  // ================= UI STATES =================
   const [showPaywall, setShowPaywall] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+
+  // ================= DERIVED STATES =================
+  const safePlan = limits[plan] ? plan : "free";
+  const isPremium = safePlan === "premium";
+  const isFreemium = safePlan === "freemium";
+
+  // ================= LOGIN =================
+  const loginWithGoogle = async () => {
+    await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: window.location.origin,
+      },
+    });
+  };
+
+  // ================= AUTH EFFECT =================
+  useEffect(() => {
+
+    const loadUserData = async (session) => {
+      try {
+
+        // cria usuário se não existir
+        await fetch("/.netlify/functions/create-user", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: session.user.id,
+            email: session.user.email,
+          }),
+        });
+
+        // busca dados reais
+        const res = await fetch("/.netlify/functions/me", {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        });
+
+        if (res.status === 401) {
+          setUser(null);
+          setPlan("free");
+          setUsage({ daily: 0, monthly: 0 });
+          setAuthChecked(true);
+          return;
+        }
+
+        if (!res.ok) throw new Error("Erro ao buscar /me");
+
+        const userData = await res.json();
+
+        setUser(session.user);
+        setPlan(userData.plan || "free");
+        setUsage({
+          daily: Number(userData.usage?.daily) || 0,
+          monthly: Number(userData.usage?.monthly) || 0,
+        });
+
+      } catch (err) {
+        console.error("AUTH ERROR:", err);
+        setUser(null);
+        setPlan("free");
+        setUsage({ daily: 0, monthly: 0 });
+      } finally {
+        setAuthChecked(true);
+      }
+    };
+
+    const init = async () => {
+      const { data } = await supabase.auth.getSession();
+
+      if (data.session) {
+        await loadUserData(data.session);
+      } else {
+        setUser(null);
+        setPlan("free");
+        setUsage({ daily: 0, monthly: 0 });
+        setAuthChecked(true);
+      }
+    };
+
+    init();
+
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      async (_, session) => {
+        if (session) {
+          await loadUserData(session);
+        } else {
+          setUser(null);
+          setPlan("free");
+          setUsage({ daily: 0, monthly: 0 });
+          setAuthChecked(true);
+        }
+      }
+    );
+
+    return () => {
+      listener.subscription.unsubscribe();
+    };
+
+  }, []);
+ 
+
+useEffect(() => {
+  if (!user) return;
+
+  async function ensureUsageRow() {
+    const { data } = await supabase
+      .from("usage")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (!data) {
+      await supabase
+        .from("usage")
+        .insert({
+          user_id: user.id,
+          pages: 0,
+        });
+    }
+  }
+
+  ensureUsageRow();
+}, [user]);
+   
 
   /* ================= CONTENT ================= */
 
@@ -93,68 +224,42 @@ const [accessibilityMode, setAccessibilityMode] = useState(false);
 const canUseAccessibility =
   plan === "freemium" || plan === "premium";
 
-  /* ================= USAGE ================= */
 
-  const [usage, setUsage] = useState(() => {
-    const saved = localStorage.getItem("usage");
-    if (!saved) {
-      return { pages: 0, pdfs: 0, resetAt: getNextMonthlyReset() };
-    }
+       /* ================= PERMISSION ENGINE ================= */
 
-    const parsed = JSON.parse(saved);
-    if (Date.now() > parsed.resetAt) {
-  return { pages: 0, pdfs: 0, resetAt: getNextMonthlyReset() };
-}
+  function canImport() {
 
-    return parsed;
-  });
-
-  useEffect(() => {
-    localStorage.setItem("usage", JSON.stringify(usage));
-  }, [usage]);
-
-  function incrementUsage(type) {
-    setUsage((u) => ({ ...u, [type]: u[type] + 1 }));
+  // 🔒 GUEST → SEMPRE LOGIN, NUNCA PAYWALL
+  if (!user) {
+    setShowPaywall(false); // força fechar paywall se estiver aberto
+    setStatusMessage("Faça login para escanear documentos.");
+    setShowLoginModal(true);
+    return false;
   }
 
-  /* ================= BACKEND SYNC ================= */
-
-  // 🔑 quando loga, backend vira fonte da verdade
- useEffect(() => {
-  if (!isLogged) {
-    setPlan("free");
-    return;
-  }
-
-  setAuthChecked(false);
-
-  fetch("/.netlify/functions/me")
-    .then((r) => r.json())
-    .then((data) => {
-      setPlan(data.plan);
-      setUsage(data.usage);
-    })
-    .catch(() => {
-      setPlan("freemium");
-    })
-    .finally(() => {
-      setAuthChecked(true);
-    });
-}, [isLogged]);
-  /* ================= PERMISSION ENGINE ================= */
-
-  function canImport(type) {
   const currentPlan = limits[plan] ? plan : "free";
+  const planLimits = limits[currentPlan];
 
-  const limit = limits[currentPlan][type];
-  const used = usage[type] ?? 0;
+  const dailyUsed = usage?.daily ?? 0;
+  const monthlyUsed = usage?.monthly ?? 0;
 
-  if (limit === Infinity) return true;
-  if (limit === undefined) return true;
+  // 💎 Premium nunca bloqueia
+  if (currentPlan === "premium") return true;
 
-  return used < limit;
+  if (planLimits.daily !== null && dailyUsed >= planLimits.daily) {
+    setStatusMessage("Limite diário atingido. Faça upgrade para continuar.");
+    setShowPaywall(true);
+    return false;
+  }
+
+  if (planLimits.monthly !== null && monthlyUsed >= planLimits.monthly) {
+    setStatusMessage("Limite mensal atingido.");
+    setShowPaywall(true);
+    return false;
+  }
+
+  return true;
 }
-
   /* ================= REFS ================= */
 
   const utteranceRef = useRef(null);
@@ -329,7 +434,7 @@ u.pitch = voiceSettings.pitch;
 u.volume = voiceSettings.volume;
     
     utteranceRef.current = u;
-  // 🎧 acessibilidade 60+ (audível de verdade)
+  // 🎧 acessibilidade 60+ (audível de verdade) //
 u.rate = accessibilityMode ? 0.7 : 1;
 u.pitch = accessibilityMode ? 0.9 : 1;
 
@@ -432,52 +537,202 @@ u.pitch = accessibilityMode ? 0.9 : 1;
     setPlayerState("idle");
     setActiveCardId(null);
   }
+//---------------------------------------------------------//
+    async function getFreshUsage() {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return null;
 
-  /* ================= IMPORTS (GUARDED) ================= */
+  const res = await fetch("/.netlify/functions/me", {
+    headers: {
+      Authorization: `Bearer ${session.access_token}`,
+    },
+  });
 
-  async function handleImageUpload(e) {
-    if (!canImport("pages")) {
-      setStatusMessage("Limite do plano atingido");
-      setShowPaywall(true);
-      e.target.value = "";
+  if (!res.ok) return null;
+
+  return await res.json();
+}
+
+ // ================= REFRESH USER DATA =================
+async function refreshUserData() {
+  const { data } = await supabase.auth.getSession();
+  if (!data.session) return null;
+
+  const res = await fetch("/.netlify/functions/me", {
+    headers: {
+      Authorization: `Bearer ${data.session.access_token}`,
+    },
+  });
+
+  if (!res.ok) return null;
+
+  const userData = await res.json();
+
+  const updatedUsage = {
+    plan: userData.plan || "free",
+    daily: Number(userData.usage?.daily) || 0,
+    monthly: Number(userData.usage?.monthly) || 0,
+    limits: userData.limits || {
+      daily: userData.plan === "free" ? 2 : 9999,
+      monthly: userData.plan === "free" ? 60 : 9999,
+    },
+  };
+
+  setPlan(updatedUsage.plan);
+  setUsage({
+    daily: updatedUsage.daily,
+    monthly: updatedUsage.monthly,
+  });
+
+  return updatedUsage;
+}
+//🔐 FUNÇÃO GLOBAL DE VALIDAÇÃO (NOVA)//
+async function validateBeforeScan() {
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (!session) {
+    setStatusMessage("Faça login para escanear documentos.");
+    setShowPaywall(true);
+    return false;
+  }
+
+  // 🔥 SEM BLOQUEIO LOCAL
+  // Sempre deixa backend decidir
+  return true;
+}
+
+//================= IMAGE OCR =================//
+async function handleImageUpload(e) {
+
+  const file = e.target?.files?.[0];
+  if (!file) return;
+
+  // 🔒 BLOQUEIO ANTES DE TUDO
+  if (!user) {
+    setShowPaywall(false);
+    setStatusMessage("Faça login para escanear documentos.");
+    setShowLoginModal(true);
+    e.target.value = "";
+    return;
+  }
+
+  if (!canImport()) {
+    e.target.value = "";
+    return;
+  }
+
+  await handleScan(file);
+
+  e.target.value = "";
+}
+//_______✅ SCANNER OCR (VERSÃO FINAL CORRIGIDA)____//
+
+async function handleScan(file) {
+
+  // 🔒 Bloqueia antes de qualquer coisa
+  if (!canImport()) return;
+
+  try {
+    setLoading(true);
+    setStatusMessage("Processando imagem...");
+
+    const { data: { session } } = await supabase.auth.getSession();
+
+    // 🔐 Segurança extra
+    if (!session) {
+      setShowLoginModal(true);
       return;
     }
 
-    const file = e.target.files[0];
-    if (!file) return;
+    const formData = new FormData();
+    formData.append("file", file);
 
-    setLoading(true);
-    try {
-      const formData = new FormData();
-      formData.append("image", file);
+    const res = await fetch("/.netlify/functions/ocr", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: formData,
+    });
 
-      const res = await fetch("/.netlify/functions/ocr", {
-        method: "POST",
-        body: formData,
-      });
+    // 🔒 Sessão inválida
+   if (res.status === 401) {
+  setShowPaywall(false);
+  setShowLoginModal(true);
+  return;
+}
 
-      const data = await res.json();
-      if (data.text?.length > 20) {
-        setTexts((p) => [...p, sanitizeText(data.text)]);
-        incrementUsage("pages");
+    const data = await res.json();
+
+    // 🚫 Limites
+    if (res.status === 403) {
+
+      if (data.error === "daily_limit") {
+        setStatusMessage("Limite diário atingido.");
+      } else if (data.error === "monthly_limit") {
+        setStatusMessage("Limite mensal atingido.");
+      } else {
+        setStatusMessage("Limite do plano atingido.");
       }
-    } finally {
-      setLoading(false);
-      e.target.value = "";
-    }
-  }
 
+      setShowPaywall(true);
+      return;
+    }
+
+    if (!res.ok) {
+      throw new Error("Erro real no OCR");
+    }
+
+    if (!data.text) return;
+
+    const cleanText = sanitizeText(data.text);
+
+    if (cleanText && cleanText.length > 10) {
+      setTexts(prev => [...prev, cleanText]);
+    }
+
+    // 🔄 Atualiza contador local
+    setUsage({
+      daily: data.usage?.daily ?? usage.daily,
+      monthly: data.usage?.monthly ?? usage.monthly,
+    });
+
+    setStatusMessage("Escaneamento concluído!");
+
+  } catch (err) {
+    console.error("SCAN ERROR:", err);
+    setStatusMessage("Erro ao escanear documento.");
+  } finally {
+    setLoading(false);
+  }
+}
+
+//_________✅ PDF OCR (VERSÃO FINAL PROFISSIONAL)__//
 
 async function handlePdfUpload(e) {
+
   abortProcessingRef.current = false;
 
-  try {
-    if (!e?.target?.files?.[0]) return;
+  const file = e.target?.files?.[0];
+  if (!file) return;
 
-    const file = e.target.files[0];
+  // 🔒 Bloqueia antes
+  if (!canImport()) {
+    e.target.value = "";
+    return;
+  }
+
+  try {
 
     setLoading(true);
     setStatusMessage("Preparando PDF...");
+
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (!session) {
+      setShowLoginModal(true);
+      return;
+    }
 
     const buffer = await file.arrayBuffer();
 
@@ -487,16 +742,10 @@ async function handlePdfUpload(e) {
 
     for (let i = 1; i <= pdf.numPages; i++) {
 
-      if (abortProcessingRef.current) {
-        setStatusMessage("Processamento cancelado.");
-        break;
-      }
+      if (abortProcessingRef.current) break;
 
-      if (!canImport("pages")) {
-        setStatusMessage("Limite mensal atingido.");
-        setShowPaywall(true);
-        break;
-      }
+      // 🔁 Verifica limite antes de cada página
+      if (!canImport()) break;
 
       setStatusMessage(`Processando página ${i} de ${pdf.numPages}`);
       await sleep(0);
@@ -523,53 +772,71 @@ async function handlePdfUpload(e) {
       });
 
       const formData = new FormData();
-      formData.append("image", blob, `page-${i}.png`);
+      formData.append("file", blob, `page-${i}.png`);
 
       const res = await fetch("/.netlify/functions/ocr", {
         method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
         body: formData,
       });
 
-      if (!res.ok) throw new Error("Erro no OCR");
+      // 🔒 Sessão inválida
+     if (res.status === 401) {
+  setShowPaywall(false);
+  setShowLoginModal(true);
+  break;
+}
+
+
+      // 🚫 Limite atingido
+      if (res.status === 403) {
+        const errorData = await res.json();
+
+        if (errorData.error === "daily_limit") {
+          setStatusMessage("Limite diário atingido.");
+        } else if (errorData.error === "monthly_limit") {
+          setStatusMessage("Limite mensal atingido.");
+        } else {
+          setStatusMessage("Limite do plano atingido.");
+        }
+
+        setShowPaywall(true);
+        break;
+      }
+
+      if (!res.ok) {
+        throw new Error("Erro real no OCR");
+      }
 
       const data = await res.json();
-      
-      console.log("---- TEXTO BRUTO PÁGINA ----");
-console.log(data.text);
 
       if (!data.text) continue;
 
-      // 🔹 Aprende padrões nas 5 primeiras páginas
-      if (i <= 5) {
-        learnRepeatedPatterns(data.text);
-        if (i === 5) {
-          finalizeLearnedPatterns(5);
-        }
+      const cleanText = sanitizeText(data.text);
+
+      if (cleanText && cleanText.length > 30) {
+        setTexts(prev => [...prev, cleanText]);
       }
 
-      // 🔹 Remove cabeçalho / rodapé
-      let cleanText = removeLearnedPatterns(data.text);
-      cleanText = sanitizeText(cleanText);
-
-      // 🔹 Ignora páginas vazias ou lixo
-      if (!cleanText || cleanText.trim().length < 30) {
-        console.log(`Página ${i} ignorada por estar vazia ou insuficiente.`);
-        continue;
-      }
-
-      setTexts(prev => [...prev, cleanText]);
-      incrementUsage("pages");
+      // 🔄 Atualiza contador local após cada página
+      setUsage({
+        daily: data.usage?.daily ?? usage.daily,
+        monthly: data.usage?.monthly ?? usage.monthly,
+      });
     }
+
+    setStatusMessage("PDF processado com sucesso!");
 
   } catch (err) {
     console.error("PDF ERROR:", err);
     setStatusMessage("Erro ao processar PDF.");
   } finally {
     setLoading(false);
-    if (e?.target) e.target.value = "";
+    e.target.value = "";
   }
 }
-
   /* ================= UI ================= */
 if (!authChecked) {
   return (
@@ -754,17 +1021,19 @@ if (!authChecked) {
           })}
         </section>
 
-        {!isLogged && (
-          <div className="flex justify-center">
-            <button
-              onClick={() => setIsLogged(true)}
-              className="flex items-center gap-3 bg-neutral-700 hover:bg-neutral-600 px-5 py-3 rounded-xl text-sm"
-            >
-              <ArrowRightOnRectangleIcon className="h-5 w-5 text-cyan-400" />
-              Entrar com Google
-            </button>
-          </div>
-        )}
+       {!user && (
+  <button
+    onClick={loginWithGoogle}
+    className="bg-neutral-700 hover:bg-neutral-600 px-5 py-3 rounded-xl text-sm"
+  >
+    Entrar com Google
+  </button>
+)}
+{user && (
+  <div>
+    Plano: {plan}
+  </div>
+)}
       </div>
 
       <footer className="text-center text-xs mt-4">
@@ -780,7 +1049,8 @@ if (!authChecked) {
     Plano: {plan}
   </span>
   {" • "}
- Uso no mês: {usage.pages}/{limits[plan]?.pages ?? 0} páginas
+  
+ Uso no mês: {usage.monthly}/{limits[plan].monthly}
   
 </footer>
 
@@ -803,4 +1073,5 @@ if (!authChecked) {
     </div>
   );
 }
+
 

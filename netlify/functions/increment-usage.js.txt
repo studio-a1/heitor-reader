@@ -1,0 +1,162 @@
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+const limits = {
+  free: { monthly: 30, daily: 5 },
+  freemium: { monthly: 300, daily: 20 },
+  premium: { monthly: 1500, daily: Infinity },
+};
+
+export const handler = async (event) => {
+  if (event.httpMethod !== "POST") {
+    return { statusCode: 405, body: "Method Not Allowed" };
+  }
+
+  const authHeader = event.headers.authorization;
+  if (!authHeader) {
+    return {
+      statusCode: 401,
+      body: JSON.stringify({ error: "Unauthorized" }),
+    };
+  }
+
+  const token = authHeader.replace("Bearer ", "");
+
+  // 🔐 Validar usuário
+  const { data: authData, error: authError } =
+    await supabase.auth.getUser(token);
+
+  if (authError || !authData?.user) {
+    return {
+      statusCode: 401,
+      body: JSON.stringify({ error: "Invalid session" }),
+    };
+  }
+
+  const userId = authData.user.id;
+
+  // 📥 Buscar usuário
+  const { data: user, error: userError } = await supabase
+    .from("users")
+    .select("*")
+    .eq("id", userId)
+    .single();
+
+  if (userError || !user) {
+    return {
+      statusCode: 404,
+      body: JSON.stringify({ error: "User not found" }),
+    };
+  }
+
+  const plan = user.plan || "free";
+  const planLimits = limits[plan] || limits.free;
+
+  const now = new Date();
+
+  let monthlyUsage = user.usage || 0;
+  let dailyUsage = user.daily_usage || 0;
+  let cycleStart = user.cycle_start
+    ? new Date(user.cycle_start)
+    : null;
+  let lastDailyReset = user.last_daily_reset
+    ? new Date(user.last_daily_reset)
+    : null;
+
+  // =========================
+  // 🔄 RESET MENSAL
+  // =========================
+
+  if (!cycleStart) {
+    cycleStart = now;
+    monthlyUsage = 0;
+  } else {
+    const nextMonth = new Date(cycleStart);
+    nextMonth.setMonth(nextMonth.getMonth() + 1);
+
+    if (now >= nextMonth) {
+      monthlyUsage = 0;
+      cycleStart = now;
+    }
+  }
+
+  // =========================
+  // 🔄 RESET DIÁRIO
+  // =========================
+
+  if (!lastDailyReset) {
+    lastDailyReset = now;
+    dailyUsage = 0;
+  } else {
+    const lastResetDay = lastDailyReset.toDateString();
+    const today = now.toDateString();
+
+    if (lastResetDay !== today) {
+      dailyUsage = 0;
+      lastDailyReset = now;
+    }
+  }
+
+  // =========================
+  // 🚫 CHECAR LIMITES
+  // =========================
+
+  if (
+    monthlyUsage >= planLimits.monthly &&
+    planLimits.monthly !== Infinity
+  ) {
+    return {
+      statusCode: 403,
+      body: JSON.stringify({ error: "MONTHLY_LIMIT_REACHED" }),
+    };
+  }
+
+  if (
+    dailyUsage >= planLimits.daily &&
+    planLimits.daily !== Infinity
+  ) {
+    return {
+      statusCode: 403,
+      body: JSON.stringify({ error: "DAILY_LIMIT_REACHED" }),
+    };
+  }
+
+  // =========================
+  // ➕ INCREMENTAR
+  // =========================
+
+  monthlyUsage += 1;
+  dailyUsage += 1;
+
+  const { error: updateError } = await supabase
+    .from("users")
+    .update({
+      usage: monthlyUsage,
+      daily_usage: dailyUsage,
+      cycle_start: cycleStart,
+      last_daily_reset: lastDailyReset,
+    })
+    .eq("id", userId);
+
+  if (updateError) {
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: "Update failed" }),
+    };
+  }
+
+  return {
+    statusCode: 200,
+    body: JSON.stringify({
+      success: true,
+      usage: monthlyUsage,
+      daily_usage: dailyUsage,
+      plan,
+    }),
+  };
+};
+
