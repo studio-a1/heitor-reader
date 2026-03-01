@@ -228,11 +228,10 @@ const canUseAccessibility =
   plan === "freemium" || plan === "premium";
 
 
-       /* ================= PERMISSION ENGINE ================= */
+  /* ================= PERMISSION ENGINE ================= */
 
-  function canImport() {
-
-  // 🔒 GUEST → 
+ 
+  // 🔒 
   
   function canImport() {
   if (!authChecked) return false;
@@ -1079,5 +1078,3 @@ if (!authChecked) {
     </div>
   );
 }
-
-
