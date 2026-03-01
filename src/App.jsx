@@ -232,22 +232,25 @@ const canUseAccessibility =
 
   function canImport() {
 
-  // 🔒 GUEST → SEMPRE LOGIN, NUNCA PAYWALL
+  // 🔒 GUEST → 
+  
+  function canImport() {
+  if (!authChecked) return false;
+
   if (!user) {
-    setShowPaywall(false); // força fechar paywall se estiver aberto
+    setShowPaywall(false);
     setStatusMessage("Faça login para escanear documentos.");
     setShowLoginModal(true);
     return false;
   }
 
-  const currentPlan = limits[plan] ? plan : "free";
-  const planLimits = limits[currentPlan];
+  if (!plan) return false; // ⬅️ ESSENCIAL
 
+  const planLimits = limits[plan];
   const dailyUsed = usage?.daily ?? 0;
   const monthlyUsed = usage?.monthly ?? 0;
 
-  // 💎 Premium nunca bloqueia
-  if (currentPlan === "premium") return true;
+  if (plan === "premium") return true;
 
   if (planLimits.daily !== null && dailyUsed >= planLimits.daily) {
     setStatusMessage("Limite diário atingido. Faça upgrade para continuar.");
