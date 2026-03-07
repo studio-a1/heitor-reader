@@ -97,5 +97,5 @@ export default async (request: Request) => {
       JSON.stringify({ error: err.message }),
       { status: 500 }
     );
-  }
+  }console.log("PLAN IN DATABASE:", userData.plan);
 };

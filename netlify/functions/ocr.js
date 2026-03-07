@@ -42,6 +42,8 @@ export const handler = async (event) => {
   if (!user) {
     return { statusCode: 500, body: JSON.stringify({ error: "user_not_found" }) };
   }
+  
+  
 
   // 🔥 NORMALIZAÇÃO DO PLANO
   let plan = (user.plan || "free").toString().trim().toLowerCase();
@@ -87,6 +89,9 @@ export const handler = async (event) => {
       })
       .eq("id", userId);
   }
+console.log("RAW PLAN FROM DB:", user.plan);
+console.log("NORMALIZED PLAN:", plan);
+
 
   // 🚫 BLOQUEIO MENSAL
   if (planLimits.monthly !== null && usage >= planLimits.monthly) {
@@ -95,6 +100,10 @@ export const handler = async (event) => {
       body: JSON.stringify({ error: "monthly_limit" }),
     };
   }
+if (user.plan === "premium") {
+  // NÃO validar limite diário
+}
+
 
 // 🚫 BLOQUEIO DIÁRIO
 if (
@@ -174,9 +183,9 @@ if (
         });
 
         const text =
-          response.output_text ||
-          response.output?.[0]?.content?.[0]?.text ||
-          "";
+  response.output_text ||
+  response.output?.[0]?.content?.[0]?.text ||
+  "";
 
         resolve({
           statusCode: 200,

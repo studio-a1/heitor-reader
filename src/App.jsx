@@ -27,19 +27,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // ⚠️ plano inicial ANÔNIMO
 const DEFAULT_PLAN = "free";
 
-const limits = {
-  free: {
-    daily: 2,
-    monthly: 60,
-  },
-  freemium: {
-    daily: 20,
-    monthly: 300,
-  },
-  premium: {
-    daily: Infinity,
-    monthly: 1500,
-  },
+const PLAN_LIMITS = {
+  free: { daily: 2, monthly: 60 },
+  freemium: { daily: 20, monthly: 300 },
+  premium: { daily: 1500, monthly: 1500 },
 };
 
 const isMobile =
@@ -68,17 +59,36 @@ export default function App() {
   // ================= AUTH STATES =================
   const [user, setUser] = useState(null);
   const [plan, setPlan] = useState(DEFAULT_PLAN);
-  const [usage, setUsage] = useState({ daily: 0, monthly: 0 });
+
+  const [usage, setUsage] = useState({
+    daily: 0,
+    monthly: 0,
+    lastScan: null,
+  });
+
   const [authChecked, setAuthChecked] = useState(false);
 
   // ================= UI STATES =================
   const [showPaywall, setShowPaywall] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
 
-  // ================= DERIVED STATES =================
-  const safePlan = limits[plan] ? plan : "free";
+  // ================= DERIVED =================
+  const safePlan = plan || "free";
+
   const isPremium = safePlan === "premium";
   const isFreemium = safePlan === "freemium";
+
+  const limits = PLAN_LIMITS[safePlan] || PLAN_LIMITS.free;
+
+  const dailyPercent = Math.min(
+    ((usage?.daily || 0) / limits.daily) * 100,
+    100
+  );
+
+  const monthlyPercent = Math.min(
+    ((usage?.monthly || 0) / limits.monthly) * 100,
+    100
+  );
 
   // ================= LOGIN =================
   const loginWithGoogle = async () => {
@@ -90,13 +100,13 @@ export default function App() {
     });
   };
 
-  // ================= AUTH EFFECT =================
+  // ================= AUTH INIT =================
   useEffect(() => {
 
     const loadUserData = async (session) => {
+
       try {
 
-        // cria usuário se não existir
         await fetch("/.netlify/functions/create-user", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -106,20 +116,11 @@ export default function App() {
           }),
         });
 
-        // busca dados reais
         const res = await fetch("/.netlify/functions/me", {
           headers: {
             Authorization: `Bearer ${session.access_token}`,
           },
         });
-
-        if (res.status === 401) {
-          setUser(null);
-          setPlan("free");
-          setUsage({ daily: 0, monthly: 0 });
-          setAuthChecked(true);
-          return;
-        }
 
         if (!res.ok) throw new Error("Erro ao buscar /me");
 
@@ -127,83 +128,55 @@ export default function App() {
 
         setUser(session.user);
         setPlan(userData.plan || "free");
+
         setUsage({
           daily: Number(userData.usage?.daily) || 0,
           monthly: Number(userData.usage?.monthly) || 0,
+          lastScan: new Date().toISOString(),
         });
 
       } catch (err) {
+
         console.error("AUTH ERROR:", err);
+
         setUser(null);
         setPlan("free");
-        setUsage({ daily: 0, monthly: 0 });
+        setUsage({
+          daily: 0,
+          monthly: 0,
+          lastScan: null,
+        });
+
       } finally {
         setAuthChecked(true);
       }
     };
 
-    const init = async () => {
-      const { data } = await supabase.auth.getSession();
+    const { data: { subscription } } =
+      supabase.auth.onAuthStateChange((event, session) => {
 
-      if (data.session) {
-        await loadUserData(data.session);
-      } else {
-        setUser(null);
-        setPlan("free");
-        setUsage({ daily: 0, monthly: 0 });
-        setAuthChecked(true);
-      }
-    };
-
-    init();
-
-    const { data: listener } = supabase.auth.onAuthStateChange(
-      async (_, session) => {
         if (session) {
-          await loadUserData(session);
+          loadUserData(session);
         } else {
           setUser(null);
-          setPlan("free");
-          setUsage({ daily: 0, monthly: 0 });
           setAuthChecked(true);
         }
+
+      });
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session) {
+        loadUserData(data.session);
+      } else {
+        setAuthChecked(true);
       }
-    );
+    });
 
     return () => {
-      listener.subscription.unsubscribe();
+      subscription.unsubscribe();
     };
 
   }, []);
- 
-
-useEffect(() => {
-  if (!user) return;
-
-  async function ensureUsageRow() {
-    const { data, error } = await supabase
-  .from("usage")
-  .select("id")
-  .eq("user_id", user.id)
-  .maybeSingle();
-
-if (error) {
-  console.error("Erro ao verificar usage:", error);
-  return;
-}
-
-if (!data) {
-  await supabase.from("usage").insert({
-    user_id: user.id,
-    pages: 0,
-  });
-}
-  }
-
-  ensureUsageRow();
-}, [user]);
-   
-
   /* ================= CONTENT ================= */
 
   const [texts, setTexts] = useState([]);
@@ -228,37 +201,29 @@ const canUseAccessibility =
   plan === "freemium" || plan === "premium";
 
 
-  /* ================= PERMISSION ENGINE ================= */
+   // 🔒 
 
- 
-  // 🔒 
-  
-  function canImport() {
+
+function canImport() {
+
   if (!authChecked) return false;
 
   if (!user) {
-    setShowPaywall(false);
     setStatusMessage("Faça login para escanear documentos.");
     setShowLoginModal(true);
     return false;
   }
 
-  if (!plan) return false; // ⬅️ ESSENCIAL
+  const limits = PLAN_LIMITS[plan] || PLAN_LIMITS.free;
 
-  const planLimits = limits[plan];
-  const dailyUsed = usage?.daily ?? 0;
-  const monthlyUsed = usage?.monthly ?? 0;
-
-  if (plan === "premium") return true;
-
-  if (planLimits.daily !== null && dailyUsed >= planLimits.daily) {
-    setStatusMessage("Limite diário atingido. Faça upgrade para continuar.");
+  if (usage.daily >= limits.daily) {
+    setStatusMessage(`Limite diário atingido (${limits.daily}).`);
     setShowPaywall(true);
     return false;
   }
 
-  if (planLimits.monthly !== null && monthlyUsed >= planLimits.monthly) {
-    setStatusMessage("Limite mensal atingido.");
+  if (usage.monthly >= limits.monthly) {
+    setStatusMessage(`Limite mensal atingido (${limits.monthly}).`);
     setShowPaywall(true);
     return false;
   }
@@ -555,6 +520,7 @@ u.pitch = accessibilityMode ? 0.9 : 1;
 
   if (!res.ok) return null;
 
+console.log("USAGE:", usage);
   return await res.json();
 }
 
@@ -634,8 +600,9 @@ async function handleImageUpload(e) {
 
 async function handleScan(file) {
 
-  // 🔒 Bloqueia antes de qualquer coisa
   if (!canImport()) return;
+
+if (loading) return;
 
   try {
     setLoading(true);
@@ -643,7 +610,6 @@ async function handleScan(file) {
 
     const { data: { session } } = await supabase.auth.getSession();
 
-    // 🔐 Segurança extra
     if (!session) {
       setShowLoginModal(true);
       return;
@@ -660,16 +626,15 @@ async function handleScan(file) {
       body: formData,
     });
 
-    // 🔒 Sessão inválida
-   if (res.status === 401) {
-  setShowPaywall(false);
-  setShowLoginModal(true);
-  return;
-}
+    // 🔐 Sessão inválida
+    if (res.status === 401) {
+      setShowLoginModal(true);
+      return;
+    }
 
     const data = await res.json();
 
-    // 🚫 Limites
+    // 🚫 BLOQUEIO REAL VEM DO BACKEND
     if (res.status === 403) {
 
       if (data.error === "daily_limit") {
@@ -692,16 +657,17 @@ async function handleScan(file) {
 
     const cleanText = sanitizeText(data.text);
 
-    if (cleanText && cleanText.length > 10) {
+    if (cleanText.length > 10) {
       setTexts(prev => [...prev, cleanText]);
     }
 
-    // 🔄 Atualiza contador local
-    setUsage({
-      daily: data.usage?.daily ?? usage.daily,
-      monthly: data.usage?.monthly ?? usage.monthly,
-    });
-
+    // 🔄 Atualiza contadores vindos do backend
+   
+setUsage((prev) => ({
+  daily: prev.daily + 1,
+  monthly: prev.monthly + 1,
+  lastScan: new Date().toISOString(),
+}));
     setStatusMessage("Escaneamento concluído!");
 
   } catch (err) {
@@ -826,10 +792,11 @@ async function handlePdfUpload(e) {
       }
 
       // 🔄 Atualiza contador local após cada página
-      setUsage({
-        daily: data.usage?.daily ?? usage.daily,
-        monthly: data.usage?.monthly ?? usage.monthly,
-      });
+     
+setUsage(prev => ({
+  daily: data.usage?.daily ?? prev.daily,
+  monthly: data.usage?.monthly ?? prev.monthly,
+}));
     }
 
     setStatusMessage("PDF processado com sucesso!");
@@ -842,6 +809,16 @@ async function handlePdfUpload(e) {
     e.target.value = "";
   }
 }
+
+
+if (!authChecked) {
+  return (
+    <div className="min-h-screen flex items-center justify-center text-neutral-400">
+      Verificando plano...
+    </div>
+  );
+}
+
   /* ================= UI ================= */
 if (!authChecked) {
   return (
@@ -1035,13 +1012,12 @@ if (!authChecked) {
   </button>
 )}
 {user && (
-  <div>
-    Plano: {plan}
-  </div>
+  <div className="hidden"></div>
 )}
       </div>
 
-      <footer className="text-center text-xs mt-4">
+  <footer className="text-center text-xs mt-6 space-y-2">
+
   <span
     className={
       isPremium
@@ -1053,28 +1029,50 @@ if (!authChecked) {
   >
     Plano: {plan}
   </span>
-  {" • "}
-  
- Uso no mês: {usage.monthly}/{limits[plan].monthly}
-  
-</footer>
 
-     {showPaywall && (
+  <div>
+    Hoje: {usage.daily}/{limits.daily}
+    <div className="w-full bg-neutral-800 rounded-full h-2 mt-1">
+      <div
+        className="bg-green-500 h-2 rounded-full"
+        style={{ width: `${dailyPercent}%` }}
+      />
+    </div>
+  </div>
+
+  <div>
+    Mês: {usage.monthly}/{limits.monthly}
+    <div className="w-full bg-neutral-800 rounded-full h-2 mt-1">
+      <div
+        className="bg-blue-500 h-2 rounded-full"
+        style={{ width: `${monthlyPercent}%` }}
+      />
+    </div>
+  </div>
+
+</footer>
+    {showPaywall && (
   <Paywall
     onClose={() => setShowPaywall(false)}
-    onSelectPlan={(selectedPlan) => {
-      setPlan(selectedPlan);
-      setShowPaywall(false);
+    onSelectPlan={async (selectedPlan) => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
 
-      setStatusMessage(
-        selectedPlan === "premium"
-          ? "Plano Premium ativo"
-          : "Plano Freemium ativo"
-      );
+      await fetch("/.netlify/functions/upgrade", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ plan: selectedPlan }),
+      });
+
+      await refreshUserData();
+      setShowPaywall(false);
     }}
   />
 )}
 
-    </div>
-  );
+</div>
+);
 }
