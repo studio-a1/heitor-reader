@@ -535,7 +535,11 @@ u.pitch = accessibilityMode ? 0.9 : 1;
     setActiveCardId(null);
   }
 //---------------------------------------------------------//
- async function getFreshUsage() {
+
+const processingRef = useRef(false);
+
+//---------------------------------------------------------//
+async function getFreshUsage() {
 
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return null;
@@ -551,50 +555,9 @@ u.pitch = accessibilityMode ? 0.9 : 1;
   return await res.json();
 }
 
-
-// ================= REFRESH USER DATA =================
+//---------------------------------------------------------//
 async function refreshUserData() {
 
-  const { data } = await supabase.auth.getSession();
-  if (!data.session) return null;
-
-  const res = await fetch("/.netlify/functions/me", {
-    headers: {
-      Authorization: `Bearer ${data.session.access_token}`,
-    },
-  });
-
-  if (!res.ok) return null;
-
-  const userData = await res.json();
-
-  const updatedUsage = {
-    plan: userData.plan || "free",
-    daily: Number(userData.usage?.daily) || 0,
-    monthly: Number(userData.usage?.monthly) || 0,
-    limits: userData.limits || {
-      daily: userData.plan === "free" ? 2 : 9999,
-      monthly: userData.plan === "free" ? 60 : 9999,
-    },
-  };
-   async function getFreshUsage() {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) return null;
-
-  const res = await fetch("/.netlify/functions/me", {
-    headers: {
-      Authorization: `Bearer ${session.access_token}`,
-    },
-  });
-
-  if (!res.ok) return null;
-
-console.log("USAGE:", usage);
-  return await res.json();
-}
-
- // ================= REFRESH USER DATA =================
-async function refreshUserData() {
   const { data } = await supabase.auth.getSession();
   if (!data.session) return null;
 
@@ -619,28 +582,28 @@ async function refreshUserData() {
   };
 
   setPlan(updatedUsage.plan);
+
   setUsage({
-  daily: updatedUsage.daily,
-  monthly: updatedUsage.monthly,
-  limits: updatedUsage.limits
-});
+    daily: updatedUsage.daily,
+    monthly: updatedUsage.monthly,
+    limits: updatedUsage.limits,
+    lastScan: new Date().toISOString(),
+  });
 
   return updatedUsage;
 }
-//🔐 FUNÇÃO GLOBAL DE VALIDAÇÃO (NOVA) e teste//
-async function validateBeforeScan() {
-  const { data: { session } } = await supabase.auth.getSession();
 
-  if (!session) {
-    setStatusMessage("Faça login para escanear documentos.");
-    setShowPaywall(true);
-    return false;
-  }
+//---------------------------------------------------------//
+function getRemainingDaily() {
 
-  // 🔥 SEM BLOQUEIO LOCAL
-  // Sempre deixa backend decidir
-  return true;
+  if (!usage?.limits?.daily) return 9999;
+
+  const remaining = usage.limits.daily - usage.daily;
+
+  return remaining < 0 ? 0 : remaining;
 }
+
+//---------------------------------------------------------//
 async function confirmPartialPdf(totalPages, allowedPages) {
 
   return window.confirm(
@@ -651,272 +614,7 @@ async function confirmPartialPdf(totalPages, allowedPages) {
 
 }
 
-//================= IMAGE OCR =================//
-async function handleImageUpload(e) {
-
-  const file = e.target?.files?.[0];
-  if (!file) return;
-
-  // 🔒 BLOQUEIO ANTES DE TUDO
-  if (!user) {
-    setShowPaywall(false);
-    setStatusMessage("Faça login para escanear documentos.");
-    setShowLoginModal(true);
-    e.target.value = "";
-    return;
-  }
-
-  if (!canImport()) {
-    e.target.value = "";
-    return;
-  }
-
-  await handleScan(file);
-
-  e.target.value = "";
-}
-//_______✅ SCANNER OCR (VERSÃO FINAL CORRIGIDA)____//
-
-async function handleScan(file) {
-
-  if (!canImport()) return;
-
-if (loading) return;
-
-  try {
-    setLoading(true);
-    setStatusMessage("Processando imagem...");
-
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (!session) {
-      setShowLoginModal(true);
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append("file", file);
-
-    const res = await fetch("/.netlify/functions/ocr", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: formData,
-    });
-
-    // 🔐 Sessão inválida
-    if (res.status === 401) {
-      setShowLoginModal(true);
-      return;
-    }
-
-    const data = await res.json();
-    
-    if (data.usage) {
-  setUsage(prev => ({
-    daily: data.usage.daily ?? prev.daily,
-    monthly: data.usage.monthly ?? prev.monthly,
-    lastScan: new Date().toISOString(),
-  }));
-}
-
-    // 🚫 BLOQUEIO REAL VEM DO BACKEND
-    if (res.status === 403) {
-
-      if (data.error === "daily_limit") {
-        setStatusMessage("Limite diário atingido.");
-      } else if (data.error === "monthly_limit") {
-        setStatusMessage("Limite mensal atingido.");
-      } else {
-        setStatusMessage("Limite do plano atingido.");
-      }
-
-      setShowPaywall(true);
-      return;
-    }
-
-    if (!res.ok) {
-      throw new Error("Erro real no OCR");
-    }
-
-    if (!data.text) return;
-
-    const cleanText = sanitizeText(data.text);
-
-    if (cleanText.length > 10) {
-      setTexts(prev => [...prev, cleanText]);
-    }
-
-    // 🔄 Atualiza contadores vindos do backend
-   
-
-    setStatusMessage("Escaneamento concluído!");
-
-  } catch (err) {
-    console.error("SCAN ERROR:", err);
-    setStatusMessage("Erro ao escanear documento.");
-  } finally {
-    setLoading(false);
-  }
-}
-
-//_________✅ PDF OCR (VERSÃO FINAL PROFISSIONAL)__//
-
-async function handlePdfUpload(e) {
-
-  abortProcessingRef.current = false;
-
-  const file = e.target?.files?.[0];
-  if (!file) return;
-
-  // 🔒 Bloqueia antes
-  if (!canImport()) {
-    e.target.value = "";
-    return;
-  }
-
-  try {
-
-    setLoading(true);
-    setStatusMessage("Preparando PDF...");
-
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (!session) {
-      setShowLoginModal(true);
-      return;
-    }
-
-    const buffer = await file.arrayBuffer();
-
-    const pdf = await pdfjsLib.getDocument({
-      data: new Uint8Array(buffer),
-    }).promise;
-
-    for (let i = 1; i <= pdf.numPages; i++) {
-
-      if (abortProcessingRef.current) break;
-
-      // 🔁 Verifica limite antes de cada página
-      if (!canImport()) break;
-
-      setStatusMessage(`Processando página ${i} de ${pdf.numPages}`);
-      await sleep(0);
-
-      const page = await pdf.getPage(i);
-      const viewport = page.getViewport({ scale: 2 });
-
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
-
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-
-      await page.render({
-        canvasContext: ctx,
-        viewport,
-      }).promise;
-
-      const blob = await new Promise((resolve, reject) => {
-        canvas.toBlob((b) => {
-          if (!b) reject(new Error("Falha ao gerar imagem"));
-          else resolve(b);
-        }, "image/png");
-      });
-
-      const formData = new FormData();
-      formData.append("file", blob, `page-${i}.png`);
-
-      const res = await fetch("/.netlify/functions/ocr", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: formData,
-      });
-
-      // 🔒 Sessão inválida
-     if (res.status === 401) {
-  setShowPaywall(false);
-  setShowLoginModal(true);
-  break;
-}
-
-
-      // 🚫 Limite atingido
-      if (res.status === 403) {
-        const errorData = await res.json();
-
-        if (errorData.error === "daily_limit") {
-          setStatusMessage("Limite diário atingido.");
-        } else if (errorData.error === "monthly_limit") {
-          setStatusMessage("Limite mensal atingido.");
-        } else {
-          setStatusMessage("Limite do plano atingido.");
-        }
-
-        setShowPaywall(true);
-        break;
-      }
-
-      if (!res.ok) {
-        throw new Error("Erro real no OCR");
-      }
-
-      const data = await res.json();
-
-      if (!data.text) continue;
-
-      const cleanText = sanitizeText(data.text);
-
-      if (cleanText && cleanText.length > 30) {
-        setTexts(prev => [...prev, cleanText]);
-      }
-
-      // 🔄 Atualiza contador local após cada página
-     
-setUsage(prev => ({
-  daily: data.usage?.daily ?? prev.daily,
-  monthly: data.usage?.monthly ?? prev.monthly,
-}));
-    }
-
-    setStatusMessage("PDF processado com sucesso!");
-
-  } catch (err) {
-    console.error("PDF ERROR:", err);
-    setStatusMessage("Erro ao processar PDF.");
-  } finally {
-    setLoading(false);
-    e.target.value = "";
-  }
-}
-
-
-if (!authChecked) {
-  return (
-    <div className="min-h-screen flex items-center justify-center text-neutral-400">
-      Verificando plano...
-    </div>
-  );
-}
-
-  /* ================= UI ================= */
-  setPlan(updatedUsage.plan);
-
-  setUsage({
-    daily: updatedUsage.daily,
-    monthly: updatedUsage.monthly,
-    
-    lastScan: new Date().toISOString(),
-  });
-
-  return updatedUsage;
-}
-
-
-// 🔐 FUNÇÃO GLOBAL DE VALIDAÇÃO
+//---------------------------------------------------------//
 async function validateBeforeScan() {
 
   const { data: { session } } = await supabase.auth.getSession();
@@ -927,12 +625,10 @@ async function validateBeforeScan() {
     return false;
   }
 
-  // backend decide limites
   return true;
 }
 
-
-//================= IMAGE OCR =================//
+//================ IMAGE OCR =================//
 async function handleImageUpload(e) {
 
   const file = e.target?.files?.[0];
@@ -946,23 +642,18 @@ async function handleImageUpload(e) {
     return;
   }
 
-  if (!canImport()) {
-    e.target.value = "";
-    return;
-  }
-
   await handleScan(file);
 
   e.target.value = "";
 }
 
-
-
-//_______✅ SCANNER OCR (IMAGEM)____//
-
+//---------------------------------------------------------//
+// OCR IMAGEM
 async function handleScan(file) {
 
-  if (!canImport()) return;
+  if (processingRef.current) return;
+  processingRef.current = true;
+
   if (loading) return;
 
   try {
@@ -995,44 +686,40 @@ async function handleScan(file) {
 
     const data = await res.json();
 
-    // 🔄 contador sempre vindo do backend
     if (data.usage) {
 
       setUsage(prev => ({
         daily: data.usage.daily ?? prev.daily,
         monthly: data.usage.monthly ?? prev.monthly,
+        limits: prev.limits,
         lastScan: new Date().toISOString(),
       }));
 
     }
 
-    // 🚫 limite vindo do backend
     if (res.status === 403) {
 
-      if (data.error === "daily_limit") {
+      if (data.error === "daily_limit")
         setStatusMessage("Limite diário atingido.");
-      }
-      else if (data.error === "monthly_limit") {
+      else if (data.error === "monthly_limit")
         setStatusMessage("Limite mensal atingido.");
-      }
-      else {
+      else
         setStatusMessage("Limite do plano atingido.");
-      }
 
       setShowPaywall(true);
       return;
     }
 
-    if (!res.ok) {
-      throw new Error("Erro real no OCR");
-    }
+    if (!res.ok) throw new Error("Erro OCR");
 
-    if (!data.text) return;
+    if (data.text) {
 
-    const cleanText = sanitizeText(data.text);
+      const cleanText = sanitizeText(data.text);
 
-    if (cleanText.length > 10) {
-      setTexts(prev => [...prev, cleanText]);
+      if (cleanText.length > 10) {
+        setTexts(prev => [...prev, cleanText]);
+      }
+
     }
 
     setStatusMessage("Escaneamento concluído!");
@@ -1048,34 +735,22 @@ async function handleScan(file) {
 
   finally {
 
+    processingRef.current = false;
     setLoading(false);
 
   }
 }
 
-function getRemainingDaily() {
-
-  if (!usage?.limits?.daily) return 9999;
-
-  const remaining = usage.limits.daily - usage.daily;
-
-  return remaining < 0 ? 0 : remaining;
-
-}
-
-//_________✅ PDF OCR (VERSÃO FINAL PROFISSIONAL)__//
-
+//================ PDF OCR =================//
 async function handlePdfUpload(e) {
+
+  if (processingRef.current) return;
+  processingRef.current = true;
 
   abortProcessingRef.current = false;
 
   const file = e.target?.files?.[0];
   if (!file) return;
-
-  if (!canImport()) {
-    e.target.value = "";
-    return;
-  }
 
   try {
 
@@ -1094,35 +769,42 @@ async function handlePdfUpload(e) {
     const pdf = await pdfjsLib.getDocument({
       data: new Uint8Array(buffer),
     }).promise;
-    
-    // 🔎 PRECHECK INTELIGENTE
-const remainingToday = getRemainingDaily();
 
-if (pdf.numPages > remainingToday) {
+    const remainingToday = getRemainingDaily();
 
-  setStatusMessage(
-    `Este PDF tem ${pdf.numPages} páginas, mas seu limite restante hoje é ${remainingToday}.`
-  );
+    let maxPagesToProcess = pdf.numPages;
 
-  setShowPaywall(true);
-  setLoading(false);
-  e.target.value = "";
+    if (remainingToday <= 0) {
 
-  return;
-}
+      setStatusMessage("Limite diário atingido.");
+      setShowPaywall(true);
+      return;
 
-    for (let i = 1; i <= pdf.numPages; i++) {
+    }
+
+    if (pdf.numPages > remainingToday) {
+
+      const acceptPartial = await confirmPartialPdf(
+        pdf.numPages,
+        remainingToday
+      );
+
+      if (!acceptPartial) {
+        setStatusMessage("Operação cancelada.");
+        return;
+      }
+
+      maxPagesToProcess = remainingToday;
+
+    }
+
+    for (let i = 1; i <= maxPagesToProcess; i++) {
 
       if (abortProcessingRef.current) break;
 
-      // 🔒 checa limite antes de cada página
-      if (!canImport()) break;
-
-      setStatusMessage(`Processando página ${i} de ${pdf.numPages}`);
-      await sleep(0);
+      setStatusMessage(`Processando página ${i} de ${maxPagesToProcess}`);
 
       const page = await pdf.getPage(i);
-
       const viewport = page.getViewport({ scale: 2 });
 
       const canvas = document.createElement("canvas");
@@ -1136,14 +818,9 @@ if (pdf.numPages > remainingToday) {
         viewport,
       }).promise;
 
-      const blob = await new Promise((resolve, reject) => {
-
-        canvas.toBlob((b) => {
-          if (!b) reject(new Error("Falha ao gerar imagem"));
-          else resolve(b);
-        }, "image/png");
-
-      });
+      const blob = await new Promise((resolve) =>
+        canvas.toBlob(resolve, "image/png")
+      );
 
       const formData = new FormData();
       formData.append("file", blob, `page-${i}.png`);
@@ -1157,7 +834,6 @@ if (pdf.numPages > remainingToday) {
       });
 
       if (res.status === 401) {
-        setShowPaywall(false);
         setShowLoginModal(true);
         break;
       }
@@ -1166,41 +842,36 @@ if (pdf.numPages > remainingToday) {
 
         const errorData = await res.json();
 
-        if (errorData.error === "daily_limit") {
+        if (errorData.error === "daily_limit")
           setStatusMessage("Limite diário atingido.");
-        }
-        else if (errorData.error === "monthly_limit") {
+        else if (errorData.error === "monthly_limit")
           setStatusMessage("Limite mensal atingido.");
-        }
-        else {
+        else
           setStatusMessage("Limite do plano atingido.");
-        }
 
         setShowPaywall(true);
         break;
 
       }
 
-      if (!res.ok) {
-        throw new Error("Erro real no OCR");
-      }
-
       const data = await res.json();
 
-      if (!data.text) continue;
+      if (data.text) {
 
-      const cleanText = sanitizeText(data.text);
+        const cleanText = sanitizeText(data.text);
 
-      if (cleanText && cleanText.length > 30) {
-        setTexts(prev => [...prev, cleanText]);
+        if (cleanText.length > 30) {
+          setTexts(prev => [...prev, cleanText]);
+        }
+
       }
 
-      // 🔄 contador backend
       if (data.usage) {
 
         setUsage(prev => ({
           daily: data.usage.daily ?? prev.daily,
           monthly: data.usage.monthly ?? prev.monthly,
+          limits: prev.limits,
           lastScan: new Date().toISOString(),
         }));
 
@@ -1208,7 +879,10 @@ if (pdf.numPages > remainingToday) {
 
     }
 
-    setStatusMessage("PDF processado com sucesso!");
+    if (maxPagesToProcess < pdf.numPages)
+      setStatusMessage(`PDF parcialmente processado (${maxPagesToProcess}/${pdf.numPages})`);
+    else
+      setStatusMessage("PDF processado com sucesso!");
 
   }
 
@@ -1221,14 +895,14 @@ if (pdf.numPages > remainingToday) {
 
   finally {
 
+    processingRef.current = false;
     setLoading(false);
     e.target.value = "";
 
   }
 }
 
-
-
+//---------------------------------------------------------//
 if (!authChecked) {
 
   return (
@@ -1237,15 +911,6 @@ if (!authChecked) {
     </div>
   );
 
-}
-
-  /* ================= UI ================= */
-if (!authChecked) {
-  return (
-    <div className="min-h-screen flex items-center justify-center text-neutral-400">
-      Verificando plano…
-    </div>
-  );
 }
  return (
   <div
