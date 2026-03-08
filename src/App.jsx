@@ -71,6 +71,33 @@ export default function App() {
   // ================= UI STATES =================
   const [showPaywall, setShowPaywall] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
+  
+  useEffect(() => {
+  if (!usage.lastScan) return;
+
+  const last = new Date(usage.lastScan);
+  const now = new Date();
+
+  const isNewDay =
+    last.getDate() !== now.getDate() ||
+    last.getMonth() !== now.getMonth() ||
+    last.getFullYear() !== now.getFullYear();
+
+  if (isNewDay) {
+    setUsage(prev => ({
+      ...prev,
+      daily: 0
+    }));
+    const isNewMonth =
+  last.getMonth() !== now.getMonth() ||
+  last.getFullYear() !== now.getFullYear();
+  setUsage(prev => ({
+  ...prev,
+  daily: isNewDay ? 0 : prev.daily,
+  monthly: isNewMonth ? 0 : prev.monthly
+}));
+  }
+}, []);
 
   // ================= DERIVED =================
   const safePlan = plan || "free";
@@ -508,7 +535,49 @@ u.pitch = accessibilityMode ? 0.9 : 1;
     setActiveCardId(null);
   }
 //---------------------------------------------------------//
-    async function getFreshUsage() {
+ async function getFreshUsage() {
+
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return null;
+
+  const res = await fetch("/.netlify/functions/me", {
+    headers: {
+      Authorization: `Bearer ${session.access_token}`,
+    },
+  });
+
+  if (!res.ok) return null;
+
+  return await res.json();
+}
+
+
+// ================= REFRESH USER DATA =================
+async function refreshUserData() {
+
+  const { data } = await supabase.auth.getSession();
+  if (!data.session) return null;
+
+  const res = await fetch("/.netlify/functions/me", {
+    headers: {
+      Authorization: `Bearer ${data.session.access_token}`,
+    },
+  });
+
+  if (!res.ok) return null;
+
+  const userData = await res.json();
+
+  const updatedUsage = {
+    plan: userData.plan || "free",
+    daily: Number(userData.usage?.daily) || 0,
+    monthly: Number(userData.usage?.monthly) || 0,
+    limits: userData.limits || {
+      daily: userData.plan === "free" ? 2 : 9999,
+      monthly: userData.plan === "free" ? 60 : 9999,
+    },
+  };
+   async function getFreshUsage() {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return null;
 
@@ -551,9 +620,10 @@ async function refreshUserData() {
 
   setPlan(updatedUsage.plan);
   setUsage({
-    daily: updatedUsage.daily,
-    monthly: updatedUsage.monthly,
-  });
+  daily: updatedUsage.daily,
+  monthly: updatedUsage.monthly,
+  limits: updatedUsage.limits
+});
 
   return updatedUsage;
 }
@@ -570,6 +640,15 @@ async function validateBeforeScan() {
   // 🔥 SEM BLOQUEIO LOCAL
   // Sempre deixa backend decidir
   return true;
+}
+async function confirmPartialPdf(totalPages, allowedPages) {
+
+  return window.confirm(
+    `Este PDF tem ${totalPages} páginas.\n\n` +
+    `Seu limite restante hoje é ${allowedPages} páginas.\n\n` +
+    `Deseja processar apenas as primeiras ${allowedPages} páginas?`
+  );
+
 }
 
 //================= IMAGE OCR =================//
@@ -633,6 +712,14 @@ if (loading) return;
     }
 
     const data = await res.json();
+    
+    if (data.usage) {
+  setUsage(prev => ({
+    daily: data.usage.daily ?? prev.daily,
+    monthly: data.usage.monthly ?? prev.monthly,
+    lastScan: new Date().toISOString(),
+  }));
+}
 
     // 🚫 BLOQUEIO REAL VEM DO BACKEND
     if (res.status === 403) {
@@ -663,11 +750,7 @@ if (loading) return;
 
     // 🔄 Atualiza contadores vindos do backend
    
-setUsage((prev) => ({
-  daily: prev.daily + 1,
-  monthly: prev.monthly + 1,
-  lastScan: new Date().toISOString(),
-}));
+
     setStatusMessage("Escaneamento concluído!");
 
   } catch (err) {
@@ -817,6 +900,343 @@ if (!authChecked) {
       Verificando plano...
     </div>
   );
+}
+
+  /* ================= UI ================= */
+  setPlan(updatedUsage.plan);
+
+  setUsage({
+    daily: updatedUsage.daily,
+    monthly: updatedUsage.monthly,
+    
+    lastScan: new Date().toISOString(),
+  });
+
+  return updatedUsage;
+}
+
+
+// 🔐 FUNÇÃO GLOBAL DE VALIDAÇÃO
+async function validateBeforeScan() {
+
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (!session) {
+    setStatusMessage("Faça login para escanear documentos.");
+    setShowPaywall(true);
+    return false;
+  }
+
+  // backend decide limites
+  return true;
+}
+
+
+//================= IMAGE OCR =================//
+async function handleImageUpload(e) {
+
+  const file = e.target?.files?.[0];
+  if (!file) return;
+
+  if (!user) {
+    setShowPaywall(false);
+    setStatusMessage("Faça login para escanear documentos.");
+    setShowLoginModal(true);
+    e.target.value = "";
+    return;
+  }
+
+  if (!canImport()) {
+    e.target.value = "";
+    return;
+  }
+
+  await handleScan(file);
+
+  e.target.value = "";
+}
+
+
+
+//_______✅ SCANNER OCR (IMAGEM)____//
+
+async function handleScan(file) {
+
+  if (!canImport()) return;
+  if (loading) return;
+
+  try {
+
+    setLoading(true);
+    setStatusMessage("Processando imagem...");
+
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (!session) {
+      setShowLoginModal(true);
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const res = await fetch("/.netlify/functions/ocr", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: formData,
+    });
+
+    if (res.status === 401) {
+      setShowLoginModal(true);
+      return;
+    }
+
+    const data = await res.json();
+
+    // 🔄 contador sempre vindo do backend
+    if (data.usage) {
+
+      setUsage(prev => ({
+        daily: data.usage.daily ?? prev.daily,
+        monthly: data.usage.monthly ?? prev.monthly,
+        lastScan: new Date().toISOString(),
+      }));
+
+    }
+
+    // 🚫 limite vindo do backend
+    if (res.status === 403) {
+
+      if (data.error === "daily_limit") {
+        setStatusMessage("Limite diário atingido.");
+      }
+      else if (data.error === "monthly_limit") {
+        setStatusMessage("Limite mensal atingido.");
+      }
+      else {
+        setStatusMessage("Limite do plano atingido.");
+      }
+
+      setShowPaywall(true);
+      return;
+    }
+
+    if (!res.ok) {
+      throw new Error("Erro real no OCR");
+    }
+
+    if (!data.text) return;
+
+    const cleanText = sanitizeText(data.text);
+
+    if (cleanText.length > 10) {
+      setTexts(prev => [...prev, cleanText]);
+    }
+
+    setStatusMessage("Escaneamento concluído!");
+
+  }
+
+  catch (err) {
+
+    console.error("SCAN ERROR:", err);
+    setStatusMessage("Erro ao escanear documento.");
+
+  }
+
+  finally {
+
+    setLoading(false);
+
+  }
+}
+
+function getRemainingDaily() {
+
+  if (!usage?.limits?.daily) return 9999;
+
+  const remaining = usage.limits.daily - usage.daily;
+
+  return remaining < 0 ? 0 : remaining;
+
+}
+
+//_________✅ PDF OCR (VERSÃO FINAL PROFISSIONAL)__//
+
+async function handlePdfUpload(e) {
+
+  abortProcessingRef.current = false;
+
+  const file = e.target?.files?.[0];
+  if (!file) return;
+
+  if (!canImport()) {
+    e.target.value = "";
+    return;
+  }
+
+  try {
+
+    setLoading(true);
+    setStatusMessage("Preparando PDF...");
+
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (!session) {
+      setShowLoginModal(true);
+      return;
+    }
+
+    const buffer = await file.arrayBuffer();
+
+    const pdf = await pdfjsLib.getDocument({
+      data: new Uint8Array(buffer),
+    }).promise;
+    
+    // 🔎 PRECHECK INTELIGENTE
+const remainingToday = getRemainingDaily();
+
+if (pdf.numPages > remainingToday) {
+
+  setStatusMessage(
+    `Este PDF tem ${pdf.numPages} páginas, mas seu limite restante hoje é ${remainingToday}.`
+  );
+
+  setShowPaywall(true);
+  setLoading(false);
+  e.target.value = "";
+
+  return;
+}
+
+    for (let i = 1; i <= pdf.numPages; i++) {
+
+      if (abortProcessingRef.current) break;
+
+      // 🔒 checa limite antes de cada página
+      if (!canImport()) break;
+
+      setStatusMessage(`Processando página ${i} de ${pdf.numPages}`);
+      await sleep(0);
+
+      const page = await pdf.getPage(i);
+
+      const viewport = page.getViewport({ scale: 2 });
+
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+
+      await page.render({
+        canvasContext: ctx,
+        viewport,
+      }).promise;
+
+      const blob = await new Promise((resolve, reject) => {
+
+        canvas.toBlob((b) => {
+          if (!b) reject(new Error("Falha ao gerar imagem"));
+          else resolve(b);
+        }, "image/png");
+
+      });
+
+      const formData = new FormData();
+      formData.append("file", blob, `page-${i}.png`);
+
+      const res = await fetch("/.netlify/functions/ocr", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: formData,
+      });
+
+      if (res.status === 401) {
+        setShowPaywall(false);
+        setShowLoginModal(true);
+        break;
+      }
+
+      if (res.status === 403) {
+
+        const errorData = await res.json();
+
+        if (errorData.error === "daily_limit") {
+          setStatusMessage("Limite diário atingido.");
+        }
+        else if (errorData.error === "monthly_limit") {
+          setStatusMessage("Limite mensal atingido.");
+        }
+        else {
+          setStatusMessage("Limite do plano atingido.");
+        }
+
+        setShowPaywall(true);
+        break;
+
+      }
+
+      if (!res.ok) {
+        throw new Error("Erro real no OCR");
+      }
+
+      const data = await res.json();
+
+      if (!data.text) continue;
+
+      const cleanText = sanitizeText(data.text);
+
+      if (cleanText && cleanText.length > 30) {
+        setTexts(prev => [...prev, cleanText]);
+      }
+
+      // 🔄 contador backend
+      if (data.usage) {
+
+        setUsage(prev => ({
+          daily: data.usage.daily ?? prev.daily,
+          monthly: data.usage.monthly ?? prev.monthly,
+          lastScan: new Date().toISOString(),
+        }));
+
+      }
+
+    }
+
+    setStatusMessage("PDF processado com sucesso!");
+
+  }
+
+  catch (err) {
+
+    console.error("PDF ERROR:", err);
+    setStatusMessage("Erro ao processar PDF.");
+
+  }
+
+  finally {
+
+    setLoading(false);
+    e.target.value = "";
+
+  }
+}
+
+
+
+if (!authChecked) {
+
+  return (
+    <div className="min-h-screen flex items-center justify-center text-neutral-400">
+      Verificando plano...
+    </div>
+  );
+
 }
 
   /* ================= UI ================= */
@@ -1016,38 +1436,33 @@ if (!authChecked) {
 )}
       </div>
 
-  <footer className="text-center text-xs mt-6 space-y-2">
+ <footer className="text-center text-xs mt-6 space-y-2">
 
   <span
     className={
       isPremium
-        ? "text-amber-700 font-semibold"
+        ? "text-amber-600 font-semibold"
         : isFreemium
         ? "text-cyan-400"
         : "text-neutral-400"
     }
   >
-    Plano: {plan}
+    Plano: {safePlan}
   </span>
 
   <div>
-    Hoje: {usage.daily}/{limits.daily}
-    <div className="w-full bg-neutral-800 rounded-full h-2 mt-1">
-      <div
-        className="bg-green-500 h-2 rounded-full"
-        style={{ width: `${dailyPercent}%` }}
-      />
-    </div>
+    Uso hoje: {usage.daily}
+  </div>
+
+  <div className="w-full bg-neutral-800 rounded-full h-2 mt-1">
+    <div
+      className="bg-green-500 h-2 rounded-full"
+      style={{ width: `${monthlyPercent}%` }}
+    />
   </div>
 
   <div>
-    Mês: {usage.monthly}/{limits.monthly}
-    <div className="w-full bg-neutral-800 rounded-full h-2 mt-1">
-      <div
-        className="bg-blue-500 h-2 rounded-full"
-        style={{ width: `${monthlyPercent}%` }}
-      />
-    </div>
+    {usage.monthly} / {limits.monthly} este mês
   </div>
 
 </footer>
