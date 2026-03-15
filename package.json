@@ -13,6 +13,8 @@
     "@heroicons/react": "^2.2.0",
     "@supabase/supabase-js": "^2.97.0",
     "busboy": "^1.6.0",
+    "clsx": "^2.1.1",
+    "eslint-plugin-react": "^7.37.5",
     "formidable": "^3.5.4",
     "google-auth-library": "^10.5.0",
     "heroicons": "^2.2.0",
