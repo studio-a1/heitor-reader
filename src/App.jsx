@@ -12,8 +12,10 @@ import {
   TrashIcon,
 } from "@heroicons/react/24/outline";
 import * as pdfjsLib from "pdfjs-dist";
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+/* ================= FIX CSP (sem eval) ================= */
+import pdfjsWorker from "pdfjs-dist/build/pdf.worker.entry";
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+
 import Paywall from "./components/Paywall";
 
 /* ================= CONFIG ================= */
@@ -34,22 +36,15 @@ export default function App() {
   const [usage, setUsage] = useState({ daily: 0, monthly: 0, lastScan: null });
   const [authChecked, setAuthChecked] = useState(false);
   const [showPaywall, setShowPaywall] = useState(false);
-
   const [texts, setTexts] = useState([]);
   const [history, setHistory] = useState([]);
   const [activeCardIndex, setActiveCardIndex] = useState(null);
-
   const [playerState, setPlayerState] = useState("idle");
   const [continuous, setContinuous] = useState(false);
   const [rewindFlash, setRewindFlash] = useState(false);
   const [statusMessage, setStatusMessage] = useState("Escolha como deseja importar o conteúdo.");
   const [loading, setLoading] = useState(false);
-
-  // ================= MODO ACESSÍVEL =================
   const [accessibilityMode, setAccessibilityMode] = useState(false);
-  const canUseAccessibility = plan === "freemium" || plan === "premium";
-
-  // ================= VOZ PREMIUM =================
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
   const [voices, setVoices] = useState([]);
   const [selectedVoiceURI, setSelectedVoiceURI] = useState(null);
@@ -62,16 +57,24 @@ export default function App() {
   const limits = PLAN_LIMITS[safePlan] || PLAN_LIMITS.free;
   const monthlyPercent = Math.min(((usage?.monthly || 0) / limits.monthly) * 100, 100);
 
+  /* ==================== FIX AQUI (estava faltando) ==================== */
+  const canUseAccessibility = plan === "freemium" || plan === "premium";
+  /* ================================================================= */
+
   /* ================= REFS ================= */
   const utteranceRef = useRef(null);
   const blocksRef = useRef([]);
   const blockIndexRef = useRef(0);
-  const activeIndexRef = useRef(null);           // ← FIX DO SEGUNDO CARD
+  const activeIndexRef = useRef(null);
   const warmedUpRef = useRef(false);
   const abortProcessingRef = useRef(false);
   const processingRef = useRef(false);
   const wakeLockRef = useRef(null);
   const cardsContainerRef = useRef(null);
+  const cameraInputRef = useRef(null);
+  const imageInputRef = useRef(null);
+  const pdfInputRef = useRef(null);
+  const wasPlayingBeforeBackgroundRef = useRef(false);
 
   // ================= PERSISTÊNCIA =================
   useEffect(() => {
@@ -89,7 +92,7 @@ export default function App() {
     localStorage.setItem(`${prefix}-history`, JSON.stringify(history));
   }, [texts, history, user]);
 
-  // ================= VOZ PREMIUM PERSISTENTE =================
+  // ================= VOZ PREMIUM =================
   useEffect(() => {
     if (isPremium) {
       const saved = localStorage.getItem("heitor-premium-voice");
@@ -101,44 +104,40 @@ export default function App() {
     if (isPremium && selectedVoiceURI) localStorage.setItem("heitor-premium-voice", selectedVoiceURI);
   }, [selectedVoiceURI, isPremium]);
 
-  // ================= VOZES (só português) =================
+  // ================= VOZES =================
+  const loadVoices = () => {
+    const available = speechSynthesis.getVoices().filter(v => v.lang.startsWith("pt"));
+    setVoices(available);
+    if (!selectedVoiceURI && available.length > 0) {
+      const defaultVoice = available.find(v =>
+        v.name.toLowerCase().includes("female") ||
+        v.name.toLowerCase().includes("maria") ||
+        v.name.toLowerCase().includes("brasil")
+      ) || available[0];
+      setSelectedVoiceURI(defaultVoice.voiceURI);
+    }
+  };
+
   useEffect(() => {
-    const loadVoices = () => {
-      let available = speechSynthesis.getVoices().filter(v => v.lang.startsWith("pt"));
-      setVoices(available);
-      if (!selectedVoiceURI && available.length > 0) {
-        const defaultVoice = available.find(v => 
-          v.name.toLowerCase().includes("female") || v.name.toLowerCase().includes("maria")
-        ) || available[0];
-        setSelectedVoiceURI(defaultVoice.voiceURI);
-      }
-    };
     speechSynthesis.onvoiceschanged = loadVoices;
     loadVoices();
   }, []);
 
-  // ================= SCROLL SUAVE =================
   useEffect(() => {
-    if (activeCardIndex === null || !cardsContainerRef.current) return;
-    setTimeout(() => {
-      const card = cardsContainerRef.current.children[activeCardIndex];
-      if (card) card.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
-    }, 10);
-  }, [activeCardIndex]);
+    if (showVoiceSettings) setTimeout(loadVoices, 300);
+  }, [showVoiceSettings]);
 
-  // ================= WAKE LOCK =================
+  // ================= WAKE LOCK + VISIBILITY =================
   const requestWakeLock = async () => {
     if (!("wakeLock" in navigator)) return;
     try { wakeLockRef.current = await navigator.wakeLock.request("screen"); } catch {}
   };
-
   const releaseWakeLock = () => {
     if (wakeLockRef.current) {
       wakeLockRef.current.release();
       wakeLockRef.current = null;
     }
   };
-
   useEffect(() => {
     if (playerState === "playing") requestWakeLock();
     else releaseWakeLock();
@@ -146,11 +145,33 @@ export default function App() {
 
   useEffect(() => {
     const handleVisibility = () => {
-      if (document.visibilityState === "visible" && playerState === "playing") requestWakeLock();
+      if (document.visibilityState === "visible") {
+        requestWakeLock();
+        if (wasPlayingBeforeBackgroundRef.current && activeIndexRef.current !== null) {
+          resumePlayback(activeIndexRef.current);
+          wasPlayingBeforeBackgroundRef.current = false;
+        }
+      } else if (playerState === "playing") {
+        wasPlayingBeforeBackgroundRef.current = true;
+      }
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [playerState]);
+
+  // ================= RESET DIÁRIO =================
+  useEffect(() => {
+    if (!user || !usage.lastScan) return;
+    const last = new Date(usage.lastScan);
+    const today = new Date();
+    if (last.toDateString() !== today.toDateString() && usage.daily > 0) {
+      setUsage(prev => ({
+        daily: 0,
+        monthly: prev.monthly,
+        lastScan: today.toISOString(),
+      }));
+    }
+  }, [user, usage.lastScan, usage.daily]);
 
   // ================= LIXEIRA + HISTÓRICO =================
   const moveToHistory = (id) => {
@@ -163,7 +184,6 @@ export default function App() {
     setHistory(prev => [item, ...prev]);
     setStatusMessage("✅ Arquivado no histórico");
   };
-
   const restoreFromHistory = (id) => {
     const item = history.find(h => h.id === id);
     if (!item) return;
@@ -171,7 +191,6 @@ export default function App() {
     setTexts(prev => [...prev, item]);
     setStatusMessage("✅ Restaurado!");
   };
-
   const permanentDelete = (id) => {
     if (!window.confirm("Excluir permanentemente?")) return;
     setHistory(prev => prev.filter(h => h.id !== id));
@@ -183,6 +202,9 @@ export default function App() {
       provider: "google",
       options: { redirectTo: window.location.origin },
     });
+  };
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
   };
 
   useEffect(() => {
@@ -206,7 +228,7 @@ export default function App() {
         });
       } catch {
         setUser(null);
-        setPlan("free");
+        setPlan(DEFAULT_PLAN);
         setUsage({ daily: 0, monthly: 0, lastScan: null });
       } finally {
         setAuthChecked(true);
@@ -215,14 +237,22 @@ export default function App() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
       if (session) loadUserData(session);
-      else { setUser(null); setAuthChecked(true); }
+      else {
+        setUser(null);
+        setPlan(DEFAULT_PLAN);
+        setUsage({ daily: 0, monthly: 0, lastScan: null });
+        setShowVoiceSettings(false);
+        setAccessibilityMode(false);
+        setAuthChecked(true);
+        setStatusMessage("✅ Conta desconectada com sucesso!");
+      }
     });
 
     supabase.auth.getSession().then(({ data }) => data.session && loadUserData(data.session));
     return () => subscription.unsubscribe();
   }, []);
 
-  // ================= TEXT FUNCTIONS =================
+  // ================= TEXT + PLAYER =================
   function sanitizeText(text) {
     return text
       .replace(/[\[\]\(\)\{\}\*<>]/g, "")
@@ -235,7 +265,6 @@ export default function App() {
       .replace(/[ \t]{2,}/g, " ")
       .trim();
   }
-
   function splitIntoBlocks(text, maxLength = 600) {
     const lines = text.split(/\n+/);
     const blocks = [];
@@ -247,8 +276,6 @@ export default function App() {
     if (current.trim()) blocks.push(current.trim());
     return blocks;
   }
-
-  // ================= VOICE & PLAYER (FIX DO SEGUNDO CARD) =================
   function warmUpVoice() {
     if (warmedUpRef.current) return;
     const u = new SpeechSynthesisUtterance(" ");
@@ -256,27 +283,21 @@ export default function App() {
     speechSynthesis.speak(u);
     warmedUpRef.current = true;
   }
-
   function getVoiceSettings() {
     return { rate: isPremium ? customRate : 1, pitch: isPremium ? customPitch : 1, volume: 1 };
   }
-
   function speakBlock(cardIndex) {
     const block = blocksRef.current[blockIndexRef.current];
     if (!block) return;
-
     const u = new SpeechSynthesisUtterance(block);
     const s = getVoiceSettings();
-
     if (isPremium && selectedVoiceURI) {
       const chosen = voices.find(v => v.voiceURI === selectedVoiceURI);
       if (chosen) u.voice = chosen;
     }
-
     u.rate = accessibilityMode ? 0.7 : s.rate;
     u.pitch = accessibilityMode ? 0.9 : s.pitch;
     u.volume = s.volume;
-
     utteranceRef.current = u;
     u.onstart = () => setPlayerState("playing");
     u.onend = () => {
@@ -291,31 +312,25 @@ export default function App() {
     };
     speechSynthesis.speak(u);
   }
-
   function playFromStart(index) {
-    speechSynthesis.cancel();                    // ← GARANTE LIMPEZA
+    speechSynthesis.cancel();
     requestWakeLock();
     warmUpVoice();
-
-    activeIndexRef.current = index;              // ← FIX DO SEGUNDO CARD
+    activeIndexRef.current = index;
     setActiveCardIndex(index);
-
     const clean = sanitizeText(texts[index].text);
     blocksRef.current = splitIntoBlocks(clean, isMobile ? 450 : 600);
     blockIndexRef.current = 0;
-
     speakBlock(index);
   }
-
   function pausePlayback(index) {
     if (activeCardIndex !== index) return;
     speechSynthesis.pause();
     setPlayerState("paused");
     setStatusMessage("Leitura pausada");
   }
-
   function resumePlayback(index) {
-    if (activeCardIndex !== index) return;
+    if (activeCardIndex !== index && activeIndexRef.current !== index) return;
     if (!isMobile) {
       speechSynthesis.resume();
       setPlayerState("playing");
@@ -324,15 +339,23 @@ export default function App() {
     const block = blocksRef.current[blockIndexRef.current];
     if (!block) return;
     const u = new SpeechSynthesisUtterance(block);
+    const s = getVoiceSettings();
+    if (isPremium && selectedVoiceURI) {
+      const chosen = voices.find(v => v.voiceURI === selectedVoiceURI);
+      if (chosen) u.voice = chosen;
+    }
+    u.rate = accessibilityMode ? 0.7 : s.rate;
+    u.pitch = accessibilityMode ? 0.9 : s.pitch;
+    u.volume = s.volume;
     u.onend = () => {
       blockIndexRef.current += 1;
       if (blockIndexRef.current < blocksRef.current.length) speakBlock(index);
       else stopPlayback();
     };
+    utteranceRef.current = u;
     speechSynthesis.speak(u);
     setPlayerState("playing");
   }
-
   function rewind(index) {
     if (activeCardIndex !== index || blockIndexRef.current === 0) return;
     setRewindFlash(true);
@@ -341,7 +364,6 @@ export default function App() {
     blockIndexRef.current -= 1;
     speakBlock(index);
   }
-
   function stopPlayback() {
     speechSynthesis.cancel();
     releaseWakeLock();
@@ -350,10 +372,24 @@ export default function App() {
     setActiveCardIndex(null);
   }
 
-  // ================= OCR (mantido) =================
+  // ================= OPEN PICKER =================
+  const openScanner = () => {
+    if (!user) { setStatusMessage("Faça login para realizar o escaneamento."); return; }
+    cameraInputRef.current?.click();
+  };
+  const openImage = () => {
+    if (!user) { setStatusMessage("Faça login para realizar o escaneamento."); return; }
+    imageInputRef.current?.click();
+  };
+  const openPdf = () => {
+    if (!user) { setStatusMessage("Faça login para realizar o escaneamento."); return; }
+    pdfInputRef.current?.click();
+  };
+
+  // ================= OCR =================
   async function handleImageUpload(e) {
     const file = e.target?.files?.[0];
-    if (!file || !user) { setShowPaywall(true); return; }
+    if (!file) return;
     await handleScan(file);
     e.target.value = "";
   }
@@ -373,7 +409,11 @@ export default function App() {
         headers: { Authorization: `Bearer ${session.access_token}` },
         body: formData,
       });
-      if (res.status === 403) { setShowPaywall(true); return; }
+      if (res.status === 403) {
+        setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
+        setShowPaywall(true);
+        return;
+      }
       const data = await res.json();
       if (data.usage) {
         setUsage(prev => ({
@@ -403,15 +443,30 @@ export default function App() {
     processingRef.current = true;
     abortProcessingRef.current = false;
     const file = e.target?.files?.[0];
-    if (!file) return;
+    if (!file) { processingRef.current = false; return; }
+
     try {
       setLoading(true);
       setStatusMessage("Preparando PDF...");
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
+
       const buffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
-      let maxPages = pdf.numPages;
+      const maxPages = pdf.numPages;
+
+      const remaining = limits.daily - (usage.daily || 0);
+      if (maxPages > remaining) {
+        setStatusMessage(`⚠️ Este PDF tem ${maxPages} páginas e consumiria ${maxPages} scans. Você tem apenas ${remaining} scans restantes hoje.`);
+        const wantUpgrade = window.confirm("Deseja fazer upgrade para Premium (ilimitado) ou cancelar?");
+        if (wantUpgrade) setShowPaywall(true);
+        else setStatusMessage("Escaneamento de PDF cancelado.");
+        processingRef.current = false;
+        setLoading(false);
+        e.target.value = "";
+        return;
+      }
+
       for (let i = 1; i <= maxPages; i++) {
         if (abortProcessingRef.current) break;
         setStatusMessage(`Processando página ${i}/${maxPages}`);
@@ -422,6 +477,7 @@ export default function App() {
         const ctx = canvas.getContext("2d");
         await page.render({ canvasContext: ctx, viewport }).promise;
         const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
+
         const formData = new FormData();
         formData.append("file", blob, `page-${i}.png`);
         const res = await fetch("/.netlify/functions/ocr", {
@@ -429,6 +485,13 @@ export default function App() {
           headers: { Authorization: `Bearer ${session.access_token}` },
           body: formData,
         });
+
+        if (res.status === 403) {
+          setStatusMessage("❌ Limite diário atingido durante o PDF!");
+          setShowPaywall(true);
+          break;
+        }
+
         const data = await res.json();
         if (data.usage) {
           setUsage(prev => ({
@@ -462,7 +525,6 @@ export default function App() {
   return (
     <div className={`min-h-screen text-neutral-200 p-4 ${isPremium ? "bg-neutral-800" : isFreemium ? "bg-neutral-900/95" : "bg-neutral-900"}`}>
       <div className={`max-w-6xl mx-auto rounded-2xl p-6 space-y-6 ${isPremium ? "bg-neutral-500 text-neutral-950 shadow-xl" : isFreemium ? "bg-neutral-800 text-neutral-100" : "bg-neutral-800 text-neutral-200"}`}>
-
         <header className="text-center">
           <h1 className="text-2xl font-semibold">Heitor Reader</h1>
           <p className="text-sm opacity-70">Leitura assistida</p>
@@ -478,18 +540,26 @@ export default function App() {
               🔊 Voz Premium
             </button>
           )}
+
+          {(isFreemium || isPremium) && user && (
+            <button onClick={handleLogout} className="mt-3 inline-flex items-center gap-2 px-4 py-1 rounded-full text-xs border border-red-500 text-red-400 hover:bg-red-500 hover:text-white transition">
+              🚪 Sair da conta
+            </button>
+          )}
         </header>
 
         {isPremium && showVoiceSettings && (
           <div className="bg-neutral-900 p-4 rounded-xl text-sm mt-4">
             <label className="block mb-2">Voz em Português:</label>
-            <select value={selectedVoiceURI || ""} onChange={e => setSelectedVoiceURI(e.target.value)} className="w-full bg-neutral-800 p-2 rounded text-neutral-200">
-              {voices.map(v => <option key={v.voiceURI} value={v.voiceURI}>{v.name}</option>)}
-            </select>
-
+            {voices.length > 0 ? (
+              <select value={selectedVoiceURI || ""} onChange={e => setSelectedVoiceURI(e.target.value)} className="w-full bg-neutral-800 p-3 rounded text-neutral-200 border border-neutral-700">
+                {voices.map(v => <option key={v.voiceURI} value={v.voiceURI}>{v.name} {v.lang}</option>)}
+              </select>
+            ) : (
+              <p className="text-amber-400 text-xs">Carregando vozes... (toque novamente se não aparecer)</p>
+            )}
             <label className="block mt-4 mb-1">Velocidade: {customRate.toFixed(1)}x</label>
             <input type="range" min="0.5" max="2" step="0.1" value={customRate} onChange={e => setCustomRate(parseFloat(e.target.value))} className="w-full" />
-
             <label className="block mt-4 mb-1">Tom: {customPitch.toFixed(1)}</label>
             <input type="range" min="0.5" max="1.5" step="0.1" value={customPitch} onChange={e => setCustomPitch(parseFloat(e.target.value))} className="w-full" />
           </div>
@@ -500,21 +570,21 @@ export default function App() {
         </div>
 
         <section className="flex justify-center gap-4 flex-wrap">
-          <label className="w-36 h-28 bg-green-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
+          <div onClick={openScanner} className="w-36 h-28 bg-green-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
             <CameraIcon className="h-8 w-8" />
             <span>Scanner</span>
-            <input hidden type="file" accept="image/*" capture="environment" onChange={handleImageUpload} />
-          </label>
-          <label className="w-36 h-28 bg-cyan-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
+            <input ref={cameraInputRef} hidden type="file" accept="image/*" capture="environment" onChange={handleImageUpload} />
+          </div>
+          <div onClick={openImage} className="w-36 h-28 bg-cyan-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
             <PhotoIcon className="h-8 w-8" />
             <span>Imagem</span>
-            <input hidden type="file" accept="image/*" onChange={handleImageUpload} />
-          </label>
-          <label className="w-36 h-28 bg-red-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
+            <input ref={imageInputRef} hidden type="file" accept="image/*" onChange={handleImageUpload} />
+          </div>
+          <div onClick={openPdf} className="w-36 h-28 bg-red-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
             <DocumentTextIcon className="h-8 w-8" />
             <span>PDF</span>
-            <input hidden type="file" accept="application/pdf" onChange={handlePdfUpload} />
-          </label>
+            <input ref={pdfInputRef} hidden type="file" accept="application/pdf" onChange={handlePdfUpload} />
+          </div>
         </section>
 
         <label className="flex justify-center gap-2 text-sm">
@@ -522,7 +592,6 @@ export default function App() {
           Leitura contínua
         </label>
 
-        {/* CARDS */}
         <section ref={cardsContainerRef} className="flex gap-4 overflow-x-auto pb-4">
           {texts.map((entry, i) => {
             const isActive = activeCardIndex === i;
@@ -558,7 +627,6 @@ export default function App() {
           })}
         </section>
 
-        {/* HISTÓRICO */}
         {history.length > 0 && (
           <section className="mt-8 bg-neutral-950/50 rounded-2xl p-5">
             <div className="flex items-center justify-between mb-4">
