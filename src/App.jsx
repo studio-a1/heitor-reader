@@ -12,8 +12,8 @@ import {
   TrashIcon,
 } from "@heroicons/react/24/outline";
 import * as pdfjsLib from "pdfjs-dist";
-/* ================= FIX CSP (sem eval) ================= */
-import pdfjsWorker from "pdfjs-dist/build/pdf.worker.entry";
+/* ================= FIX VITE + PDF.JS (sem erro de default export) ================= */
+import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.js?url";
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 import Paywall from "./components/Paywall";
@@ -56,10 +56,7 @@ export default function App() {
   const isFreemium = safePlan === "freemium";
   const limits = PLAN_LIMITS[safePlan] || PLAN_LIMITS.free;
   const monthlyPercent = Math.min(((usage?.monthly || 0) / limits.monthly) * 100, 100);
-
-  /* ==================== FIX AQUI (estava faltando) ==================== */
   const canUseAccessibility = plan === "freemium" || plan === "premium";
-  /* ================================================================= */
 
   /* ================= REFS ================= */
   const utteranceRef = useRef(null);
@@ -252,7 +249,7 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // ================= TEXT + PLAYER =================
+  // ================= TEXT FUNCTIONS =================
   function sanitizeText(text) {
     return text
       .replace(/[\[\]\(\)\{\}\*<>]/g, "")
@@ -276,6 +273,8 @@ export default function App() {
     if (current.trim()) blocks.push(current.trim());
     return blocks;
   }
+
+  // ================= VOICE & PLAYER =================
   function warmUpVoice() {
     if (warmedUpRef.current) return;
     const u = new SpeechSynthesisUtterance(" ");
