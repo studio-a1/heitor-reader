@@ -154,27 +154,21 @@ export default function App() {
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [playerState]);
 
-  // ================= RESET 24H ROLLING =================
+  // ================= RESET 24H =================
   useEffect(() => {
     if (!user || !usage.lastScan || usage.daily === 0) return;
     const lastTime = new Date(usage.lastScan).getTime();
     const now = Date.now();
     if (now - lastTime > 24 * 60 * 60 * 1000) {
-      setUsage(prev => ({
-        daily: 0,
-        monthly: prev.monthly,
-        lastScan: new Date().toISOString(),
-      }));
+      setUsage(prev => ({ daily: 0, monthly: prev.monthly, lastScan: new Date().toISOString() }));
     }
   }, [user, usage.lastScan, usage.daily]);
 
-  // ================= SCROLL PARA BLOCO ATUAL =================
+  // ================= SCROLL MARCAÇÃO =================
   useEffect(() => {
     if (playerState === "playing" && activeCardIndex !== null) {
       const highlighted = document.getElementById(`block-${currentSpeakingIndex}`);
-      if (highlighted) {
-        highlighted.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
+      if (highlighted) highlighted.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, [currentSpeakingIndex, playerState, activeCardIndex]);
 
@@ -271,7 +265,7 @@ export default function App() {
       .replace(/[ \t]{2,}/g, " ")
       .trim();
   }
-  function splitIntoBlocks(text, maxLength = 600) {
+  function splitIntoBlocks(text, maxLength = isMobile ? 250 : 350) {  // ← BLOCO MENOR
     const lines = text.split(/\n+/);
     const blocks = [];
     let current = "";
@@ -330,7 +324,7 @@ export default function App() {
     activeIndexRef.current = index;
     setActiveCardIndex(index);
     const clean = sanitizeText(texts[index].text);
-    blocksRef.current = splitIntoBlocks(clean, isMobile ? 450 : 600);
+    blocksRef.current = splitIntoBlocks(clean);
     blockIndexRef.current = 0;
     speakBlock(index);
   }
@@ -384,7 +378,7 @@ export default function App() {
     setCurrentSpeakingIndex(0);
   }
 
-  // ================= OPEN PICKER (com aviso Freemium) =================
+  // ================= OPEN PICKER =================
   const openScanner = () => {
     if (!user) { setStatusMessage("Faça login para escanear documentos."); return; }
     if (usage.daily >= limits.daily) {
@@ -426,7 +420,7 @@ export default function App() {
     processingRef.current = true;
     try {
       setLoading(true);
-      setStatusMessage("Processando imagem...");
+      setStatusMessage("Scan Pag. 1");
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
       const formData = new FormData();
@@ -474,7 +468,6 @@ export default function App() {
 
     try {
       setLoading(true);
-      setStatusMessage("Preparando PDF...");
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
@@ -496,7 +489,7 @@ export default function App() {
 
       for (let i = 1; i <= maxPages; i++) {
         if (abortProcessingRef.current) break;
-        setStatusMessage(`Processando página ${i}/${maxPages}`);
+        setStatusMessage(`Scan Pag. ${i}/${maxPages}`);
         const page = await pdf.getPage(i);
         const viewport = page.getViewport({ scale: 2 });
         const canvas = document.createElement("canvas");
@@ -574,7 +567,8 @@ export default function App() {
             </button>
           )}
 
-          {(isFreemium || isPremium) && user && (
+          {/* BOTÃO DE SAIR PARA TODO MUNDO LOGADO (incluindo Guest) */}
+          {user && (
             <button onClick={handleLogout} className="mt-3 inline-flex items-center gap-2 px-4 py-1 rounded-full text-xs border border-red-500 text-red-400 hover:bg-red-500 hover:text-white transition">
               🚪 Sair da conta
             </button>
@@ -630,11 +624,10 @@ export default function App() {
           Leitura contínua
         </label>
 
-        {/* ================= CARDS COM MARCAÇÃO REAL DE TEXTO ================= */}
+        {/* CARDS COM MARCAÇÃO */}
         <section ref={cardsContainerRef} className="flex gap-4 overflow-x-auto pb-4">
           {texts.map((entry, i) => {
             const isActive = activeCardIndex === i;
-            const isAccessibleActive = accessibilityMode && isActive;
             const isPlaying = playerState === "playing" && isActive;
 
             return (
@@ -642,9 +635,7 @@ export default function App() {
                 key={entry.id}
                 className={`min-w-[280px] p-5 rounded-xl border-2 transition-all ${
                   isPremium ? "bg-white text-neutral-900 border-amber-300" : isFreemium ? "bg-neutral-800 text-neutral-100 border-cyan-500/40" : "bg-neutral-900 text-neutral-200 border-neutral-700"
-                } ${isActive ? "border-4 border-green-400 shadow-2xl" : ""} ${
-                  isAccessibleActive ? "bg-neutral-950 text-amber-100 border-amber-400" : ""
-                }`}
+                } ${isActive ? "border-4 border-green-400 shadow-2xl" : ""}`}
               >
                 <div className="flex justify-between mb-2 text-sm">
                   <span>Página {i + 1}</span>
@@ -661,7 +652,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* MARCAÇÃO DE TEXTO EM BLOCO (sincronizada + scroll automático) */}
                 <div className={`overflow-y-auto whitespace-pre-wrap ${accessibilityMode ? "text-base leading-relaxed max-h-60" : "text-xs max-h-40"}`}>
                   {isPlaying ? (
                     blocksRef.current.map((block, idx) => (
