@@ -12,7 +12,7 @@ import {
   TrashIcon,
 } from "@heroicons/react/24/outline";
 import * as pdfjsLib from "pdfjs-dist";
-/* ================= FIX VITE + PDF.JS (sem erro de default export) ================= */
+/* ================= FIX VITE + PDF.JS ================= */
 import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.js?url";
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
@@ -50,6 +50,7 @@ export default function App() {
   const [selectedVoiceURI, setSelectedVoiceURI] = useState(null);
   const [customRate, setCustomRate] = useState(1);
   const [customPitch, setCustomPitch] = useState(1);
+  const [currentSpeakingIndex, setCurrentSpeakingIndex] = useState(0); // ← marcação de texto
 
   const safePlan = plan || "free";
   const isPremium = safePlan === "premium";
@@ -107,9 +108,7 @@ export default function App() {
     setVoices(available);
     if (!selectedVoiceURI && available.length > 0) {
       const defaultVoice = available.find(v =>
-        v.name.toLowerCase().includes("female") ||
-        v.name.toLowerCase().includes("maria") ||
-        v.name.toLowerCase().includes("brasil")
+        v.name.toLowerCase().includes("female") || v.name.toLowerCase().includes("maria") || v.name.toLowerCase().includes("brasil")
       ) || available[0];
       setSelectedVoiceURI(defaultVoice.voiceURI);
     }
@@ -156,16 +155,16 @@ export default function App() {
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [playerState]);
 
-  // ================= RESET DIÁRIO =================
+  // ================= RESET 24H ROLLING (timer 24hs para Guest/Free/Freemium) =================
   useEffect(() => {
-    if (!user || !usage.lastScan) return;
-    const last = new Date(usage.lastScan);
-    const today = new Date();
-    if (last.toDateString() !== today.toDateString() && usage.daily > 0) {
+    if (!user || !usage.lastScan || usage.daily === 0) return;
+    const lastTime = new Date(usage.lastScan).getTime();
+    const now = Date.now();
+    if (now - lastTime > 24 * 60 * 60 * 1000) {
       setUsage(prev => ({
         daily: 0,
         monthly: prev.monthly,
-        lastScan: today.toISOString(),
+        lastScan: new Date().toISOString(),
       }));
     }
   }, [user, usage.lastScan, usage.daily]);
@@ -202,6 +201,7 @@ export default function App() {
   };
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    setStatusMessage("✅ Conta desconectada com sucesso!");
   };
 
   useEffect(() => {
@@ -241,7 +241,7 @@ export default function App() {
         setShowVoiceSettings(false);
         setAccessibilityMode(false);
         setAuthChecked(true);
-        setStatusMessage("✅ Conta desconectada com sucesso!");
+        setStatusMessage("Escolha como deseja importar o conteúdo."); // ← FIX Guest
       }
     });
 
@@ -249,7 +249,7 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // ================= TEXT FUNCTIONS =================
+  // ================= TEXT + PLAYER =================
   function sanitizeText(text) {
     return text
       .replace(/[\[\]\(\)\{\}\*<>]/g, "")
@@ -273,8 +273,6 @@ export default function App() {
     if (current.trim()) blocks.push(current.trim());
     return blocks;
   }
-
-  // ================= VOICE & PLAYER =================
   function warmUpVoice() {
     if (warmedUpRef.current) return;
     const u = new SpeechSynthesisUtterance(" ");
@@ -298,7 +296,10 @@ export default function App() {
     u.pitch = accessibilityMode ? 0.9 : s.pitch;
     u.volume = s.volume;
     utteranceRef.current = u;
-    u.onstart = () => setPlayerState("playing");
+    u.onstart = () => {
+      setPlayerState("playing");
+      setCurrentSpeakingIndex(blockIndexRef.current); // ← marcação
+    };
     u.onend = () => {
       blockIndexRef.current += 1;
       if (blockIndexRef.current < blocksRef.current.length) {
@@ -369,19 +370,35 @@ export default function App() {
     activeIndexRef.current = null;
     setPlayerState("idle");
     setActiveCardIndex(null);
+    setCurrentSpeakingIndex(0);
   }
 
-  // ================= OPEN PICKER =================
+  // ================= OPEN PICKER + LIMITE ANTES DE ABRIR ARQUIVO =================
   const openScanner = () => {
-    if (!user) { setStatusMessage("Faça login para realizar o escaneamento."); return; }
+    if (!user) { setStatusMessage("Faça login para escanear documentos."); return; }
+    if (usage.daily >= limits.daily) {
+      setStatusMessage("❌ Limite diário atingido! Faça upgrade para continuar.");
+      setShowPaywall(true);
+      return;
+    }
     cameraInputRef.current?.click();
   };
   const openImage = () => {
-    if (!user) { setStatusMessage("Faça login para realizar o escaneamento."); return; }
+    if (!user) { setStatusMessage("Faça login para escanear documentos."); return; }
+    if (usage.daily >= limits.daily) {
+      setStatusMessage("❌ Limite diário atingido! Faça upgrade para continuar.");
+      setShowPaywall(true);
+      return;
+    }
     imageInputRef.current?.click();
   };
   const openPdf = () => {
-    if (!user) { setStatusMessage("Faça login para realizar o escaneamento."); return; }
+    if (!user) { setStatusMessage("Faça login para escanear documentos."); return; }
+    if (usage.daily >= limits.daily) {
+      setStatusMessage("❌ Limite diário atingido! Faça upgrade para continuar.");
+      setShowPaywall(true);
+      return;
+    }
     pdfInputRef.current?.click();
   };
 
@@ -456,10 +473,10 @@ export default function App() {
 
       const remaining = limits.daily - (usage.daily || 0);
       if (maxPages > remaining) {
-        setStatusMessage(`⚠️ Este PDF tem ${maxPages} páginas e consumiria ${maxPages} scans. Você tem apenas ${remaining} scans restantes hoje.`);
-        const wantUpgrade = window.confirm("Deseja fazer upgrade para Premium (ilimitado) ou cancelar?");
+        setStatusMessage(`⚠️ Este PDF tem ${maxPages} páginas e consumiria ${maxPages} scans. Você tem apenas ${remaining} restantes.`);
+        const wantUpgrade = window.confirm("Deseja fazer upgrade para Premium ou cancelar?");
         if (wantUpgrade) setShowPaywall(true);
-        else setStatusMessage("Escaneamento de PDF cancelado.");
+        else setStatusMessage("Escaneamento cancelado.");
         processingRef.current = false;
         setLoading(false);
         e.target.value = "";
@@ -517,6 +534,13 @@ export default function App() {
     }
   }
 
+  // ================= CANCELAR SCAN =================
+  const cancelScan = () => {
+    abortProcessingRef.current = true;
+    setLoading(false);
+    setStatusMessage("Escaneamento cancelado pelo usuário.");
+  };
+
   if (!authChecked) {
     return <div className="min-h-screen flex items-center justify-center text-neutral-400">Verificando plano...</div>;
   }
@@ -566,6 +590,11 @@ export default function App() {
 
         <div className="text-center text-cyan-400 text-sm min-h-[20px]">
           {loading ? "Processando…" : statusMessage}
+          {loading && (
+            <button onClick={cancelScan} className="ml-4 bg-red-600 hover:bg-red-700 px-4 py-1 rounded text-xs transition">
+              Cancelar scan
+            </button>
+          )}
         </div>
 
         <section className="flex justify-center gap-4 flex-wrap">
@@ -576,7 +605,7 @@ export default function App() {
           </div>
           <div onClick={openImage} className="w-36 h-28 bg-cyan-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
             <PhotoIcon className="h-8 w-8" />
-            <span>Imagem</span>
+            <span>Imagem de texto</span>
             <input ref={imageInputRef} hidden type="file" accept="image/*" onChange={handleImageUpload} />
           </div>
           <div onClick={openPdf} className="w-36 h-28 bg-red-800 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer">
@@ -601,26 +630,33 @@ export default function App() {
                 className={`min-w-[280px] p-5 rounded-xl border-2 transition-all ${
                   isPremium ? "bg-white text-neutral-900 border-amber-300" : isFreemium ? "bg-neutral-800 text-neutral-100 border-cyan-500/40" : "bg-neutral-900 text-neutral-200 border-neutral-700"
                 } ${isActive ? "border-4 border-green-400 shadow-2xl" : ""} ${
-                  isAccessibleActive ? "bg-amber-100 text-neutral-950 border-amber-600" : ""
+                  isAccessibleActive 
+                    ? "bg-neutral-950 text-amber-100 border-amber-400" // ← escurece fundo Freemium
+                    : ""
                 }`}
               >
                 <div className="flex justify-between mb-2 text-sm">
                   <span>Página {i + 1}</span>
                   <div className="flex gap-2">
-                    <PlayIcon className="h-5 w-5 cursor-pointer text-green-400" onClick={() => playFromStart(i)} />
+                    <PlayIcon className="h-5 w-5 cursor-pointer text-green-400 hover:scale-110" onClick={() => playFromStart(i)} />
                     {playerState === "playing" && isActive ? (
-                      <PauseIcon className="h-5 w-5 cursor-pointer text-yellow-400" onClick={() => pausePlayback(i)} />
+                      <PauseIcon className="h-5 w-5 cursor-pointer text-yellow-400 hover:scale-110" onClick={() => pausePlayback(i)} />
                     ) : (
-                      <PlayIcon className="h-5 w-5 cursor-pointer text-yellow-400" onClick={() => resumePlayback(i)} />
+                      <PlayIcon className="h-5 w-5 cursor-pointer text-yellow-400 hover:scale-110" onClick={() => resumePlayback(i)} />
                     )}
-                    <ArrowUturnLeftIcon className={`h-5 w-5 cursor-pointer text-blue-400 ${rewindFlash ? "opacity-100" : "opacity-70"}`} onClick={() => rewind(i)} />
-                    <StopIcon className="h-5 w-5 cursor-pointer text-red-400" onClick={stopPlayback} />
+                    <ArrowUturnLeftIcon className={`h-5 w-5 cursor-pointer text-blue-400 hover:scale-110 ${rewindFlash ? "opacity-100" : "opacity-70"}`} onClick={() => rewind(i)} />
+                    <StopIcon className="h-5 w-5 cursor-pointer text-red-400 hover:scale-110" onClick={stopPlayback} />
                     <ArchiveBoxIcon className="h-5 w-5 cursor-pointer text-blue-400 hover:text-blue-500" onClick={() => moveToHistory(entry.id)} />
                   </div>
                 </div>
-                <div className={`overflow-y-auto whitespace-pre-wrap ${accessibilityMode ? "text-base leading-relaxed max-h-60" : "text-xs max-h-40"}`}>
+                <div className={`overflow-y-auto whitespace-pre-wrap ${accessibilityMode ? "text-lg leading-relaxed max-h-60" : "text-xs max-h-40"}`}>
                   {entry.text}
                 </div>
+                {isActive && playerState === "playing" && (
+                  <div className="text-green-400 text-xs mt-2 flex items-center gap-1">
+                    🔊 Lendo bloco {currentSpeakingIndex + 1} / {blocksRef.current.length}
+                  </div>
+                )}
               </div>
             );
           })}
