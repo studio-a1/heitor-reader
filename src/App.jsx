@@ -12,7 +12,6 @@ import {
   TrashIcon,
 } from "@heroicons/react/24/outline";
 import * as pdfjsLib from "pdfjs-dist";
-/* ================= FIX VITE + PDF.JS ================= */
 import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.js?url";
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
@@ -50,7 +49,7 @@ export default function App() {
   const [selectedVoiceURI, setSelectedVoiceURI] = useState(null);
   const [customRate, setCustomRate] = useState(1);
   const [customPitch, setCustomPitch] = useState(1);
-  const [currentSpeakingIndex, setCurrentSpeakingIndex] = useState(0); // ← marcação de texto
+  const [currentSpeakingIndex, setCurrentSpeakingIndex] = useState(0);
 
   const safePlan = plan || "free";
   const isPremium = safePlan === "premium";
@@ -155,7 +154,7 @@ export default function App() {
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [playerState]);
 
-  // ================= RESET 24H ROLLING (timer 24hs para Guest/Free/Freemium) =================
+  // ================= RESET 24H ROLLING =================
   useEffect(() => {
     if (!user || !usage.lastScan || usage.daily === 0) return;
     const lastTime = new Date(usage.lastScan).getTime();
@@ -168,6 +167,16 @@ export default function App() {
       }));
     }
   }, [user, usage.lastScan, usage.daily]);
+
+  // ================= SCROLL PARA BLOCO ATUAL =================
+  useEffect(() => {
+    if (playerState === "playing" && activeCardIndex !== null) {
+      const highlighted = document.getElementById(`block-${currentSpeakingIndex}`);
+      if (highlighted) {
+        highlighted.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
+  }, [currentSpeakingIndex, playerState, activeCardIndex]);
 
   // ================= LIXEIRA + HISTÓRICO =================
   const moveToHistory = (id) => {
@@ -241,7 +250,7 @@ export default function App() {
         setShowVoiceSettings(false);
         setAccessibilityMode(false);
         setAuthChecked(true);
-        setStatusMessage("Escolha como deseja importar o conteúdo."); // ← FIX Guest
+        setStatusMessage("Escolha como deseja importar o conteúdo.");
       }
     });
 
@@ -249,7 +258,7 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // ================= TEXT + PLAYER =================
+  // ================= TEXT FUNCTIONS =================
   function sanitizeText(text) {
     return text
       .replace(/[\[\]\(\)\{\}\*<>]/g, "")
@@ -273,6 +282,8 @@ export default function App() {
     if (current.trim()) blocks.push(current.trim());
     return blocks;
   }
+
+  // ================= VOICE & PLAYER =================
   function warmUpVoice() {
     if (warmedUpRef.current) return;
     const u = new SpeechSynthesisUtterance(" ");
@@ -298,7 +309,7 @@ export default function App() {
     utteranceRef.current = u;
     u.onstart = () => {
       setPlayerState("playing");
-      setCurrentSpeakingIndex(blockIndexRef.current); // ← marcação
+      setCurrentSpeakingIndex(blockIndexRef.current);
     };
     u.onend = () => {
       blockIndexRef.current += 1;
@@ -373,11 +384,11 @@ export default function App() {
     setCurrentSpeakingIndex(0);
   }
 
-  // ================= OPEN PICKER + LIMITE ANTES DE ABRIR ARQUIVO =================
+  // ================= OPEN PICKER (com aviso Freemium) =================
   const openScanner = () => {
     if (!user) { setStatusMessage("Faça login para escanear documentos."); return; }
     if (usage.daily >= limits.daily) {
-      setStatusMessage("❌ Limite diário atingido! Faça upgrade para continuar.");
+      setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
       setShowPaywall(true);
       return;
     }
@@ -386,7 +397,7 @@ export default function App() {
   const openImage = () => {
     if (!user) { setStatusMessage("Faça login para escanear documentos."); return; }
     if (usage.daily >= limits.daily) {
-      setStatusMessage("❌ Limite diário atingido! Faça upgrade para continuar.");
+      setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
       setShowPaywall(true);
       return;
     }
@@ -395,7 +406,7 @@ export default function App() {
   const openPdf = () => {
     if (!user) { setStatusMessage("Faça login para escanear documentos."); return; }
     if (usage.daily >= limits.daily) {
-      setStatusMessage("❌ Limite diário atingido! Faça upgrade para continuar.");
+      setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
       setShowPaywall(true);
       return;
     }
@@ -503,7 +514,7 @@ export default function App() {
         });
 
         if (res.status === 403) {
-          setStatusMessage("❌ Limite diário atingido durante o PDF!");
+          setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
           setShowPaywall(true);
           break;
         }
@@ -534,11 +545,10 @@ export default function App() {
     }
   }
 
-  // ================= CANCELAR SCAN =================
   const cancelScan = () => {
     abortProcessingRef.current = true;
     setLoading(false);
-    setStatusMessage("Escaneamento cancelado pelo usuário.");
+    setStatusMessage("Escaneamento cancelado.");
   };
 
   if (!authChecked) {
@@ -620,19 +630,20 @@ export default function App() {
           Leitura contínua
         </label>
 
+        {/* ================= CARDS COM MARCAÇÃO REAL DE TEXTO ================= */}
         <section ref={cardsContainerRef} className="flex gap-4 overflow-x-auto pb-4">
           {texts.map((entry, i) => {
             const isActive = activeCardIndex === i;
             const isAccessibleActive = accessibilityMode && isActive;
+            const isPlaying = playerState === "playing" && isActive;
+
             return (
               <div
                 key={entry.id}
                 className={`min-w-[280px] p-5 rounded-xl border-2 transition-all ${
                   isPremium ? "bg-white text-neutral-900 border-amber-300" : isFreemium ? "bg-neutral-800 text-neutral-100 border-cyan-500/40" : "bg-neutral-900 text-neutral-200 border-neutral-700"
                 } ${isActive ? "border-4 border-green-400 shadow-2xl" : ""} ${
-                  isAccessibleActive 
-                    ? "bg-neutral-950 text-amber-100 border-amber-400" // ← escurece fundo Freemium
-                    : ""
+                  isAccessibleActive ? "bg-neutral-950 text-amber-100 border-amber-400" : ""
                 }`}
               >
                 <div className="flex justify-between mb-2 text-sm">
@@ -649,9 +660,28 @@ export default function App() {
                     <ArchiveBoxIcon className="h-5 w-5 cursor-pointer text-blue-400 hover:text-blue-500" onClick={() => moveToHistory(entry.id)} />
                   </div>
                 </div>
-                <div className={`overflow-y-auto whitespace-pre-wrap ${accessibilityMode ? "text-lg leading-relaxed max-h-60" : "text-xs max-h-40"}`}>
-                  {entry.text}
+
+                {/* MARCAÇÃO DE TEXTO EM BLOCO (sincronizada + scroll automático) */}
+                <div className={`overflow-y-auto whitespace-pre-wrap ${accessibilityMode ? "text-base leading-relaxed max-h-60" : "text-xs max-h-40"}`}>
+                  {isPlaying ? (
+                    blocksRef.current.map((block, idx) => (
+                      <div
+                        key={idx}
+                        id={`block-${idx}`}
+                        className={`mb-3 p-3 rounded-lg transition-all duration-300 ${
+                          idx === currentSpeakingIndex
+                            ? "bg-green-900/80 border-l-4 border-green-400 text-green-100"
+                            : "opacity-70"
+                        }`}
+                      >
+                        {block}
+                      </div>
+                    ))
+                  ) : (
+                    entry.text
+                  )}
                 </div>
+
                 {isActive && playerState === "playing" && (
                   <div className="text-green-400 text-xs mt-2 flex items-center gap-1">
                     🔊 Lendo bloco {currentSpeakingIndex + 1} / {blocksRef.current.length}
