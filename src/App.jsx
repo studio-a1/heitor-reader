@@ -24,6 +24,7 @@ const PLAN_LIMITS = {
   freemium: { daily: 20, monthly: 300 },
   premium: { daily: 1500, monthly: 1500 },
 };
+const BETA_DISABLE_PREMIUM = true; // ← Premium congelado para beta
 const isMobile =
   typeof navigator !== "undefined" &&
   /Android|iPhone|iPad/i.test(navigator.userAgent);
@@ -122,22 +123,27 @@ export default function App() {
     if (showVoiceSettings) setTimeout(loadVoices, 300);
   }, [showVoiceSettings]);
 
-  // ================= WAKE LOCK + VISIBILITY =================
+  // ================= WAKE LOCK + VISIBILITY (melhorado para tela apagada) =================
   const requestWakeLock = async () => {
     if (!("wakeLock" in navigator)) return;
-    try { wakeLockRef.current = await navigator.wakeLock.request("screen"); } catch {}
+    try {
+      wakeLockRef.current = await navigator.wakeLock.request("screen");
+    } catch (e) {}
   };
+
   const releaseWakeLock = () => {
     if (wakeLockRef.current) {
       wakeLockRef.current.release();
       wakeLockRef.current = null;
     }
   };
+
   useEffect(() => {
     if (playerState === "playing") requestWakeLock();
     else releaseWakeLock();
   }, [playerState]);
 
+  // Visibilidade + foco (tenta manter vivo mesmo com tela apagada)
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
@@ -150,19 +156,35 @@ export default function App() {
         wasPlayingBeforeBackgroundRef.current = true;
       }
     };
+
+    const handleFocus = () => {
+      if (playerState === "playing" && activeIndexRef.current !== null) {
+        resumePlayback(activeIndexRef.current);
+      }
+    };
+
     document.addEventListener("visibilitychange", handleVisibility);
-    return () => document.removeEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleFocus);
+    };
   }, [playerState]);
 
-  // ================= RESET 24H =================
+  // ================= RESET DIÁRIO 24H (mais agressivo) =================
   useEffect(() => {
-    if (!user || !usage.lastScan || usage.daily === 0) return;
+    if (!usage.lastScan || usage.daily === 0) return;
     const lastTime = new Date(usage.lastScan).getTime();
     const now = Date.now();
     if (now - lastTime > 24 * 60 * 60 * 1000) {
-      setUsage(prev => ({ daily: 0, monthly: prev.monthly, lastScan: new Date().toISOString() }));
+      setUsage(prev => ({
+        daily: 0,
+        monthly: prev.monthly,
+        lastScan: new Date().toISOString(),
+      }));
     }
-  }, [user, usage.lastScan, usage.daily]);
+  }, [usage.lastScan, usage.daily]);
 
   // ================= SCROLL MARCAÇÃO =================
   useEffect(() => {
@@ -265,7 +287,7 @@ export default function App() {
       .replace(/[ \t]{2,}/g, " ")
       .trim();
   }
-  function splitIntoBlocks(text, maxLength = isMobile ? 250 : 350) {  // ← BLOCO MENOR
+  function splitIntoBlocks(text, maxLength = 180) { // ← ainda menor para acompanhamento mais preciso
     const lines = text.split(/\n+/);
     const blocks = [];
     let current = "";
@@ -437,11 +459,7 @@ export default function App() {
       }
       const data = await res.json();
       if (data.usage) {
-        setUsage(prev => ({
-          daily: data.usage.daily ?? prev.daily,
-          monthly: data.usage.monthly ?? prev.monthly,
-          lastScan: new Date().toISOString(),
-        }));
+        setUsage(prev => ({ daily: data.usage.daily ?? prev.daily, monthly: data.usage.monthly ?? prev.monthly, lastScan: new Date().toISOString() }));
       }
       if (data.text) {
         const clean = sanitizeText(data.text);
@@ -478,7 +496,7 @@ export default function App() {
       const remaining = limits.daily - (usage.daily || 0);
       if (maxPages > remaining) {
         setStatusMessage(`⚠️ Este PDF tem ${maxPages} páginas e consumiria ${maxPages} scans. Você tem apenas ${remaining} restantes.`);
-        const wantUpgrade = window.confirm("Deseja fazer upgrade para Premium ou cancelar?");
+        const wantUpgrade = window.confirm("Deseja fazer upgrade para Freemium ou cancelar?");
         if (wantUpgrade) setShowPaywall(true);
         else setStatusMessage("Escaneamento cancelado.");
         processingRef.current = false;
@@ -514,11 +532,7 @@ export default function App() {
 
         const data = await res.json();
         if (data.usage) {
-          setUsage(prev => ({
-            daily: data.usage.daily ?? prev.daily,
-            monthly: data.usage.monthly ?? prev.monthly,
-            lastScan: new Date().toISOString(),
-          }));
+          setUsage(prev => ({ daily: data.usage.daily ?? prev.daily, monthly: data.usage.monthly ?? prev.monthly, lastScan: new Date().toISOString() }));
         }
         if (data.text) {
           const clean = sanitizeText(data.text);
@@ -567,7 +581,6 @@ export default function App() {
             </button>
           )}
 
-          {/* BOTÃO DE SAIR PARA TODO MUNDO LOGADO (incluindo Guest) */}
           {user && (
             <button onClick={handleLogout} className="mt-3 inline-flex items-center gap-2 px-4 py-1 rounded-full text-xs border border-red-500 text-red-400 hover:bg-red-500 hover:text-white transition">
               🚪 Sair da conta
@@ -624,10 +637,10 @@ export default function App() {
           Leitura contínua
         </label>
 
-        {/* CARDS COM MARCAÇÃO */}
         <section ref={cardsContainerRef} className="flex gap-4 overflow-x-auto pb-4">
           {texts.map((entry, i) => {
             const isActive = activeCardIndex === i;
+            const isAccessibleActive = accessibilityMode && isActive;
             const isPlaying = playerState === "playing" && isActive;
 
             return (
@@ -635,7 +648,9 @@ export default function App() {
                 key={entry.id}
                 className={`min-w-[280px] p-5 rounded-xl border-2 transition-all ${
                   isPremium ? "bg-white text-neutral-900 border-amber-300" : isFreemium ? "bg-neutral-800 text-neutral-100 border-cyan-500/40" : "bg-neutral-900 text-neutral-200 border-neutral-700"
-                } ${isActive ? "border-4 border-green-400 shadow-2xl" : ""}`}
+                } ${isActive ? "border-4 border-green-400 shadow-2xl" : ""} ${
+                  isAccessibleActive ? "bg-neutral-950 text-amber-100 border-amber-400" : ""
+                }`}
               >
                 <div className="flex justify-between mb-2 text-sm">
                   <span>Página {i + 1}</span>
