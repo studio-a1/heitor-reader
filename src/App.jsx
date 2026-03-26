@@ -24,7 +24,8 @@ const PLAN_LIMITS = {
   freemium: { daily: 20, monthly: 300 },
   premium: { daily: 1500, monthly: 1500 },
 };
-const BETA_DISABLE_PREMIUM = true; // ← Premium congelado para beta
+const BETA_DISABLE_PREMIUM = true; // Premium congelado para testes beta
+
 const isMobile =
   typeof navigator !== "undefined" &&
   /Android|iPhone|iPad/i.test(navigator.userAgent);
@@ -123,14 +124,11 @@ export default function App() {
     if (showVoiceSettings) setTimeout(loadVoices, 300);
   }, [showVoiceSettings]);
 
-  // ================= WAKE LOCK + VISIBILITY (melhorado para tela apagada) =================
+  // ================= WAKE LOCK + VISIBILITY (VERSÃO AGRESSIVA) =================
   const requestWakeLock = async () => {
     if (!("wakeLock" in navigator)) return;
-    try {
-      wakeLockRef.current = await navigator.wakeLock.request("screen");
-    } catch (e) {}
+    try { wakeLockRef.current = await navigator.wakeLock.request("screen"); } catch {}
   };
-
   const releaseWakeLock = () => {
     if (wakeLockRef.current) {
       wakeLockRef.current.release();
@@ -143,7 +141,6 @@ export default function App() {
     else releaseWakeLock();
   }, [playerState]);
 
-  // Visibilidade + foco (tenta manter vivo mesmo com tela apagada)
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
@@ -163,16 +160,24 @@ export default function App() {
       }
     };
 
+    const handlePageShow = (e) => {
+      if (e.persisted && playerState === "playing" && activeIndexRef.current !== null) {
+        resumePlayback(activeIndexRef.current);
+      }
+    };
+
     document.addEventListener("visibilitychange", handleVisibility);
     window.addEventListener("focus", handleFocus);
+    window.addEventListener("pageshow", handlePageShow);
 
     return () => {
       document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("pageshow", handlePageShow);
     };
   }, [playerState]);
 
-  // ================= RESET DIÁRIO 24H (mais agressivo) =================
+  // ================= RESET 24H =================
   useEffect(() => {
     if (!usage.lastScan || usage.daily === 0) return;
     const lastTime = new Date(usage.lastScan).getTime();
@@ -287,7 +292,7 @@ export default function App() {
       .replace(/[ \t]{2,}/g, " ")
       .trim();
   }
-  function splitIntoBlocks(text, maxLength = 180) { // ← ainda menor para acompanhamento mais preciso
+  function splitIntoBlocks(text, maxLength = 120) {
     const lines = text.split(/\n+/);
     const blocks = [];
     let current = "";
@@ -459,7 +464,11 @@ export default function App() {
       }
       const data = await res.json();
       if (data.usage) {
-        setUsage(prev => ({ daily: data.usage.daily ?? prev.daily, monthly: data.usage.monthly ?? prev.monthly, lastScan: new Date().toISOString() }));
+        setUsage(prev => ({
+          daily: data.usage.daily ?? prev.daily,
+          monthly: data.usage.monthly ?? prev.monthly,
+          lastScan: new Date().toISOString(),
+        }));
       }
       if (data.text) {
         const clean = sanitizeText(data.text);
@@ -532,7 +541,11 @@ export default function App() {
 
         const data = await res.json();
         if (data.usage) {
-          setUsage(prev => ({ daily: data.usage.daily ?? prev.daily, monthly: data.usage.monthly ?? prev.monthly, lastScan: new Date().toISOString() }));
+          setUsage(prev => ({
+            daily: data.usage.daily ?? prev.daily,
+            monthly: data.usage.monthly ?? prev.monthly,
+            lastScan: new Date().toISOString(),
+          }));
         }
         if (data.text) {
           const clean = sanitizeText(data.text);
