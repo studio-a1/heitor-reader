@@ -470,6 +470,7 @@ async function handleImageUpload(e) {
 
 async function handleScan(file) {
   if (processingRef.current) return;
+
   processingRef.current = true;
 
   try {
@@ -489,7 +490,7 @@ async function handleScan(file) {
     });
 
     if (res.status === 403) {
-      setStatusMessage("❌ Limite atingido! Aguarde reset ou faça upgrade.");
+      setStatusMessage("❌ Limite atingido!");
       setShowPaywall(true);
       return;
     }
@@ -500,25 +501,28 @@ async function handleScan(file) {
       setUsage(prev => ({
         daily: data.usage.daily ?? prev.daily,
         monthly: data.usage.monthly ?? prev.monthly,
-        lastScan: data.usage.lastScan ?? prev.lastScan, // ✅ CORRIGIDO
+        lastScan: prev.lastScan,
       }));
     }
 
     if (data.text) {
       const clean = sanitizeText(data.text);
+
       if (clean.length > 10) {
         const newEntry = {
           id: `scan-${Date.now()}`,
           text: clean,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         };
+
         setTexts(prev => [...prev, newEntry]);
       }
     }
 
     setStatusMessage("Escaneamento concluído!");
 
-  } catch {
+  } catch (err) {
+    console.error("SCAN ERROR:", err);
     setStatusMessage("Erro ao escanear.");
   } finally {
     processingRef.current = false;
@@ -529,6 +533,7 @@ async function handleScan(file) {
 // ================= PDF =================
 async function handlePdfUpload(e) {
   if (processingRef.current) return;
+
   processingRef.current = true;
   abortProcessingRef.current = false;
 
@@ -548,7 +553,9 @@ async function handlePdfUpload(e) {
     const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
     const maxPages = pdf.numPages;
 
-    // ✅ CORREÇÃO AQUI
+    const hasDailyLimit = limits.daily !== null;
+
+    // 🔐 Validação limite diário
     if (hasDailyLimit) {
       const remaining = limits.daily - (usage.daily || 0);
 
@@ -557,8 +564,9 @@ async function handlePdfUpload(e) {
           `⚠️ Este PDF tem ${maxPages} páginas e você só pode escanear ${remaining} hoje.`
         );
 
-        const wantUpgrade = window.confirm("Deseja fazer upgrade?");
-        if (wantUpgrade) setShowPaywall(true);
+        if (window.confirm("Deseja fazer upgrade?")) {
+          setShowPaywall(true);
+        }
 
         processingRef.current = false;
         setLoading(false);
@@ -567,13 +575,21 @@ async function handlePdfUpload(e) {
       }
     }
 
+    // ✅ ACUMULADOR (ANTI TRAVAMENTO)
+    const newEntries = [];
+
     for (let i = 1; i <= maxPages; i++) {
       if (abortProcessingRef.current) break;
+
+      // 🔥 ANTI FREEZE DO BROWSER
+      await new Promise(r => setTimeout(r, 0));
 
       setStatusMessage(`Scan Pag. ${i}/${maxPages}`);
 
       const page = await pdf.getPage(i);
-      const viewport = page.getViewport({ scale: 2 });
+
+      // 🔥 REDUZ CARGA
+      const viewport = page.getViewport({ scale: 1.2 });
 
       const canvas = document.createElement("canvas");
       canvas.width = viewport.width;
@@ -581,7 +597,10 @@ async function handlePdfUpload(e) {
 
       const ctx = canvas.getContext("2d");
 
-      await page.render({ canvasContext: ctx, viewport }).promise;
+      await page.render({
+        canvasContext: ctx,
+        viewport
+      }).promise;
 
       const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
 
@@ -602,32 +621,41 @@ async function handlePdfUpload(e) {
 
       const data = await res.json();
 
+      // 🔄 ATUALIZA USO (SEM BAGUNÇAR ESTADO)
       if (data.usage) {
         setUsage(prev => ({
           daily: data.usage.daily ?? prev.daily,
           monthly: data.usage.monthly ?? prev.monthly,
-          lastScan: data.usage.lastScan ?? prev.lastScan, // ✅ CORRIGIDO
+          lastScan: prev.lastScan,
         }));
       }
 
+      // 🧠 TEXTO OCR
       if (data.text) {
         const clean = sanitizeText(data.text);
 
-        if (clean.length > 30) {
-          const newEntry = {
-            id: `scan-${Date.now()}`,
-            text: clean,
-            timestamp: new Date().toISOString()
-          };
+        // DEBUG (se precisar)
+        // console.log("OCR:", clean);
 
-          setTexts(prev => [...prev, newEntry]);
+        if (clean.length > 20) {
+          newEntries.push({
+            id: `scan-${Date.now()}-${i}`, // 🔥 ID único
+            text: clean,
+            timestamp: new Date().toISOString(),
+          });
         }
       }
     }
 
+    // ✅ UM ÚNICO SETSTATE (CRÍTICO)
+    if (newEntries.length > 0) {
+      setTexts(prev => [...prev, ...newEntries]);
+    }
+
     setStatusMessage("PDF processado com sucesso!");
 
-  } catch {
+  } catch (err) {
+    console.error("PDF ERROR:", err);
     setStatusMessage("Erro ao processar PDF.");
   } finally {
     processingRef.current = false;
