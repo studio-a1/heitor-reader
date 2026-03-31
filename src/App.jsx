@@ -22,7 +22,7 @@ const DEFAULT_PLAN = "free";
 const PLAN_LIMITS = {
   free: { daily: 2, monthly: 60 },
   freemium: { daily: 20, monthly: 300 },
-  premium: { daily: 1500, monthly: 1500 },
+  premium: { daily: null, monthly: 1500 },
 };
 const BETA_DISABLE_PREMIUM = true; // Premium congelado para testes beta
 
@@ -178,18 +178,25 @@ export default function App() {
   }, [playerState]);
 
   // ================= RESET 24H =================
-  useEffect(() => {
-    if (!usage.lastScan || usage.daily === 0) return;
-    const lastTime = new Date(usage.lastScan).getTime();
-    const now = Date.now();
-    if (now - lastTime > 24 * 60 * 60 * 1000) {
-      setUsage(prev => ({
-        daily: 0,
-        monthly: prev.monthly,
-        lastScan: new Date().toISOString(),
-      }));
-    }
-  }, [usage.lastScan, usage.daily]);
+ useEffect(() => {
+  if (!usage.lastScan) return;
+
+  const last = new Date(usage.lastScan);
+  const now = new Date();
+
+  const isDifferentDay =
+    last.getDate() !== now.getDate() ||
+    last.getMonth() !== now.getMonth() ||
+    last.getFullYear() !== now.getFullYear();
+
+  if (isDifferentDay) {
+    setUsage(prev => ({
+      daily: 0,
+      monthly: prev.monthly,
+      lastScan: new Date().toISOString(),
+    }));
+  }
+}, [usage.lastScan]);
 
   // ================= SCROLL MARCAÇÃO =================
   useEffect(() => {
@@ -251,7 +258,7 @@ export default function App() {
         setUsage({
           daily: Number(userData.usage?.daily) || 0,
           monthly: Number(userData.usage?.monthly) || 0,
-          lastScan: new Date().toISOString(),
+          lastScan: userData.usage?.lastScan || null,
         });
       } catch {
         setUser(null);
@@ -404,173 +411,237 @@ export default function App() {
     setActiveCardIndex(null);
     setCurrentSpeakingIndex(0);
   }
+// ================= HELPERS =================
+ const hasDailyLimit = limits.daily !== null;
 
-  // ================= OPEN PICKER =================
-  const openScanner = () => {
-    if (!user) { setStatusMessage("Faça login para escanear documentos."); return; }
-    if (usage.daily >= limits.daily) {
-      setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
-      setShowPaywall(true);
-      return;
-    }
-    cameraInputRef.current?.click();
-  };
-  const openImage = () => {
-    if (!user) { setStatusMessage("Faça login para escanear documentos."); return; }
-    if (usage.daily >= limits.daily) {
-      setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
-      setShowPaywall(true);
-      return;
-    }
-    imageInputRef.current?.click();
-  };
-  const openPdf = () => {
-    if (!user) { setStatusMessage("Faça login para escanear documentos."); return; }
-    if (usage.daily >= limits.daily) {
-      setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
-      setShowPaywall(true);
-      return;
-    }
-    pdfInputRef.current?.click();
-  };
-
-  // ================= OCR =================
-  async function handleImageUpload(e) {
-    const file = e.target?.files?.[0];
-    if (!file) return;
-    await handleScan(file);
-    e.target.value = "";
+// ================= OPEN PICKER =================
+const openScanner = () => {
+  if (!user) {
+    setStatusMessage("Faça login para escanear documentos.");
+    return;
   }
 
-  async function handleScan(file) {
-    if (processingRef.current) return;
-    processingRef.current = true;
-    try {
-      setLoading(true);
-      setStatusMessage("Scan Pag. 1");
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch("/.netlify/functions/ocr", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${session.access_token}` },
-        body: formData,
-      });
-      if (res.status === 403) {
-        setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
-        setShowPaywall(true);
-        return;
-      }
-      const data = await res.json();
-      if (data.usage) {
-        setUsage(prev => ({
-          daily: data.usage.daily ?? prev.daily,
-          monthly: data.usage.monthly ?? prev.monthly,
-          lastScan: new Date().toISOString(),
-        }));
-      }
-      if (data.text) {
-        const clean = sanitizeText(data.text);
-        if (clean.length > 10) {
-          const newEntry = { id: `scan-${Date.now()}`, text: clean, timestamp: new Date().toISOString() };
-          setTexts(prev => [...prev, newEntry]);
-        }
-      }
-      setStatusMessage("Escaneamento concluído!");
-    } catch {
-      setStatusMessage("Erro ao escanear.");
-    } finally {
-      processingRef.current = false;
-      setLoading(false);
-    }
+  if (hasDailyLimit && usage.daily >= limits.daily) {
+    setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
+    setShowPaywall(true);
+    return;
   }
 
-  async function handlePdfUpload(e) {
-    if (processingRef.current) return;
-    processingRef.current = true;
-    abortProcessingRef.current = false;
-    const file = e.target?.files?.[0];
-    if (!file) { processingRef.current = false; return; }
+  cameraInputRef.current?.click();
+};
 
-    try {
-      setLoading(true);
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+const openImage = () => {
+  if (!user) {
+    setStatusMessage("Faça login para escanear documentos.");
+    return;
+  }
 
-      const buffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
-      const maxPages = pdf.numPages;
+  if (hasDailyLimit && usage.daily >= limits.daily) {
+    setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
+    setShowPaywall(true);
+    return;
+  }
 
+  imageInputRef.current?.click();
+};
+
+const openPdf = () => {
+  if (!user) {
+    setStatusMessage("Faça login para escanear documentos.");
+    return;
+  }
+
+  if (hasDailyLimit && usage.daily >= limits.daily) {
+    setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
+    setShowPaywall(true);
+    return;
+  }
+
+  pdfInputRef.current?.click();
+};
+
+// ================= OCR =================
+async function handleImageUpload(e) {
+  const file = e.target?.files?.[0];
+  if (!file) return;
+  await handleScan(file);
+  e.target.value = "";
+}
+
+async function handleScan(file) {
+  if (processingRef.current) return;
+  processingRef.current = true;
+
+  try {
+    setLoading(true);
+    setStatusMessage("Scan Pag. 1");
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const res = await fetch("/.netlify/functions/ocr", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session.access_token}` },
+      body: formData,
+    });
+
+    if (res.status === 403) {
+      setStatusMessage("❌ Limite atingido! Aguarde reset ou faça upgrade.");
+      setShowPaywall(true);
+      return;
+    }
+
+    const data = await res.json();
+
+    if (data.usage) {
+      setUsage(prev => ({
+        daily: data.usage.daily ?? prev.daily,
+        monthly: data.usage.monthly ?? prev.monthly,
+        lastScan: data.usage.lastScan ?? prev.lastScan, // ✅ CORRIGIDO
+      }));
+    }
+
+    if (data.text) {
+      const clean = sanitizeText(data.text);
+      if (clean.length > 10) {
+        const newEntry = {
+          id: `scan-${Date.now()}`,
+          text: clean,
+          timestamp: new Date().toISOString()
+        };
+        setTexts(prev => [...prev, newEntry]);
+      }
+    }
+
+    setStatusMessage("Escaneamento concluído!");
+
+  } catch {
+    setStatusMessage("Erro ao escanear.");
+  } finally {
+    processingRef.current = false;
+    setLoading(false);
+  }
+}
+
+// ================= PDF =================
+async function handlePdfUpload(e) {
+  if (processingRef.current) return;
+  processingRef.current = true;
+  abortProcessingRef.current = false;
+
+  const file = e.target?.files?.[0];
+  if (!file) {
+    processingRef.current = false;
+    return;
+  }
+
+  try {
+    setLoading(true);
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+
+    const buffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
+    const maxPages = pdf.numPages;
+
+    // ✅ CORREÇÃO AQUI
+    if (hasDailyLimit) {
       const remaining = limits.daily - (usage.daily || 0);
+
       if (maxPages > remaining) {
-        setStatusMessage(`⚠️ Este PDF tem ${maxPages} páginas e consumiria ${maxPages} scans. Você tem apenas ${remaining} restantes.`);
-        const wantUpgrade = window.confirm("Deseja fazer upgrade para Freemium ou cancelar?");
+        setStatusMessage(
+          `⚠️ Este PDF tem ${maxPages} páginas e você só pode escanear ${remaining} hoje.`
+        );
+
+        const wantUpgrade = window.confirm("Deseja fazer upgrade?");
         if (wantUpgrade) setShowPaywall(true);
-        else setStatusMessage("Escaneamento cancelado.");
+
         processingRef.current = false;
         setLoading(false);
         e.target.value = "";
         return;
       }
+    }
 
-      for (let i = 1; i <= maxPages; i++) {
-        if (abortProcessingRef.current) break;
-        setStatusMessage(`Scan Pag. ${i}/${maxPages}`);
-        const page = await pdf.getPage(i);
-        const viewport = page.getViewport({ scale: 2 });
-        const canvas = document.createElement("canvas");
-        canvas.width = viewport.width; canvas.height = viewport.height;
-        const ctx = canvas.getContext("2d");
-        await page.render({ canvasContext: ctx, viewport }).promise;
-        const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
+    for (let i = 1; i <= maxPages; i++) {
+      if (abortProcessingRef.current) break;
 
-        const formData = new FormData();
-        formData.append("file", blob, `page-${i}.png`);
-        const res = await fetch("/.netlify/functions/ocr", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${session.access_token}` },
-          body: formData,
-        });
+      setStatusMessage(`Scan Pag. ${i}/${maxPages}`);
 
-        if (res.status === 403) {
-          setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
-          setShowPaywall(true);
-          break;
-        }
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({ scale: 2 });
 
-        const data = await res.json();
-        if (data.usage) {
-          setUsage(prev => ({
-            daily: data.usage.daily ?? prev.daily,
-            monthly: data.usage.monthly ?? prev.monthly,
-            lastScan: new Date().toISOString(),
-          }));
-        }
-        if (data.text) {
-          const clean = sanitizeText(data.text);
-          if (clean.length > 30) {
-            const newEntry = { id: `scan-${Date.now()}`, text: clean, timestamp: new Date().toISOString() };
-            setTexts(prev => [...prev, newEntry]);
-          }
+      const canvas = document.createElement("canvas");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+
+      const ctx = canvas.getContext("2d");
+
+      await page.render({ canvasContext: ctx, viewport }).promise;
+
+      const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
+
+      const formData = new FormData();
+      formData.append("file", blob, `page-${i}.png`);
+
+      const res = await fetch("/.netlify/functions/ocr", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        body: formData,
+      });
+
+      if (res.status === 403) {
+        setStatusMessage("❌ Limite atingido! Aguarde reset ou faça upgrade.");
+        setShowPaywall(true);
+        break;
+      }
+
+      const data = await res.json();
+
+      if (data.usage) {
+        setUsage(prev => ({
+          daily: data.usage.daily ?? prev.daily,
+          monthly: data.usage.monthly ?? prev.monthly,
+          lastScan: data.usage.lastScan ?? prev.lastScan, // ✅ CORRIGIDO
+        }));
+      }
+
+      if (data.text) {
+        const clean = sanitizeText(data.text);
+
+        if (clean.length > 30) {
+          const newEntry = {
+            id: `scan-${Date.now()}`,
+            text: clean,
+            timestamp: new Date().toISOString()
+          };
+
+          setTexts(prev => [...prev, newEntry]);
         }
       }
-      setStatusMessage("PDF processado com sucesso!");
-    } catch {
-      setStatusMessage("Erro ao processar PDF.");
-    } finally {
-      processingRef.current = false;
-      setLoading(false);
-      e.target.value = "";
     }
-  }
 
-  const cancelScan = () => {
-    abortProcessingRef.current = true;
+    setStatusMessage("PDF processado com sucesso!");
+
+  } catch {
+    setStatusMessage("Erro ao processar PDF.");
+  } finally {
+    processingRef.current = false;
     setLoading(false);
-    setStatusMessage("Escaneamento cancelado.");
-  };
+    e.target.value = "";
+  }
+}
 
+// ================= CANCEL =================
+const cancelScan = () => {
+  abortProcessingRef.current = true;
+  setLoading(false);
+  setStatusMessage("Escaneamento cancelado.");
+};
   if (!authChecked) {
     return <div className="min-h-screen flex items-center justify-center text-neutral-400">Verificando plano...</div>;
   }

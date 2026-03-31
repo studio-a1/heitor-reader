@@ -81,16 +81,61 @@ export default async (request: Request) => {
     }
 
     // ✅ Retorno padronizado para frontend
-    return new Response(
-      JSON.stringify({
-        plan: userData.plan,
-        usage: {
-          daily: userData.daily_usage ?? 0,
-          monthly: userData.usage ?? 0,
-        },
-      }),
-      { status: 200 }
-    );
+  const now = new Date();
+const lastReset = new Date(userData.last_reset);
+
+// 🔎 verifica se mudou o dia
+const isDifferentDay =
+  now.getDate() !== lastReset.getDate() ||
+  now.getMonth() !== lastReset.getMonth() ||
+  now.getFullYear() !== lastReset.getFullYear();
+
+let dailyUsage = userData.daily_usage ?? 0;
+let monthlyUsage = userData.usage ?? 0;
+
+// 🔁 RESET DIÁRIO
+if (isDifferentDay) {
+  dailyUsage = 0;
+
+  await supabase
+    .from("users")
+    .update({
+      daily_usage: 0,
+      last_reset: now.toISOString(),
+    })
+    .eq("id", user.id);
+}
+
+// 🔎 RESET MENSAL
+const lastMonthly = new Date(userData.monthly_reset);
+const isDifferentMonth =
+  now.getMonth() !== lastMonthly.getMonth() ||
+  now.getFullYear() !== lastMonthly.getFullYear();
+
+if (isDifferentMonth) {
+  monthlyUsage = 0;
+
+  await supabase
+    .from("users")
+    .update({
+      usage: 0,
+      monthly_reset: now.toISOString(),
+    })
+    .eq("id", user.id);
+}
+
+// ✅ RETORNO FINAL CORRETO
+return new Response(
+  JSON.stringify({
+    plan: userData.plan,
+    usage: {
+      daily: dailyUsage,
+      monthly: monthlyUsage,
+      lastScan: now.toISOString(), // importante pro front
+    },
+  }),
+  { status: 200 }
+);
 
   } catch (err: any) {
     return new Response(
