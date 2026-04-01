@@ -529,8 +529,9 @@ async function handleScan(file) {
     setLoading(false);
   }
 }
-
 // ================= PDF =================
+ //--HANDLE PDF — VERSÃO PRODUÇÃO
+
 async function handlePdfUpload(e) {
   if (processingRef.current) return;
 
@@ -663,7 +664,6 @@ async function handlePdfUpload(e) {
     e.target.value = "";
   }
 }
-
 // ================= CANCEL =================
 const cancelScan = () => {
   abortProcessingRef.current = true;
