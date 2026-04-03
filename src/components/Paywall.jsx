@@ -19,7 +19,8 @@ export default function Paywall({ onClose, onSelectPlan }) {
           <ul className="text-sm opacity-80 list-disc list-inside">
             <li>Mais páginas por dia</li>
             <li>Importação ampliada</li>
-            <li>Acessibilidade 60+</li>
+            <li>Inclusão</li>
+            <li>ATUALMENTE EM TESTE - SEM CUSTO</li>
           </ul>
 
           <button
@@ -36,14 +37,16 @@ export default function Paywall({ onClose, onSelectPlan }) {
             Premium 👑
           </h3>
           <ul className="text-sm opacity-80 list-disc list-inside">
-            <li>Uso ilimitado</li>
+            <li>Uso expandido</li>
             <li>Prioridade de leitura</li>
             <li>Acessibilidade avançada</li>
-            <li>Sem bloqueios</li>
+            <li>Controle de narração-opções de vozes</li>
+            <li>1500 scans - sem bloqueios diários</li>
+            <li>BREVE LIBERAÇÃO PARA TESTES  </li>
           </ul>
 
           <button
-            onClick={() => onSelectPlan("premium")}
+            onClick={() => onSelectPlan("freemium")}
             className="w-full bg-amber-700 hover:bg-amber-600 py-2 rounded-lg text-sm font-semibold"
           >
             Assinar Premium
