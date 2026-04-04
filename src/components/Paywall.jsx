@@ -2,7 +2,6 @@ export default function Paywall({ onClose, onSelectPlan }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center">
       <div className="bg-neutral-900 text-neutral-100 rounded-2xl w-full max-w-md p-6 space-y-6 shadow-xl">
-
         {/* HEADER */}
         <header className="text-center space-y-2">
           <h2 className="text-xl font-semibold">Limite atingido</h2>
@@ -22,16 +21,15 @@ export default function Paywall({ onClose, onSelectPlan }) {
             <li>Inclusão</li>
             <li>ATUALMENTE EM TESTE - SEM CUSTO</li>
           </ul>
-
           <button
             onClick={() => onSelectPlan("freemium")}
             className="w-full bg-cyan-700 hover:bg-cyan-600 py-2 rounded-lg text-sm font-medium"
           >
-            Continuar no Freemium
+            Continuar para Freemium
           </button>
         </div>
 
-        {/* PREMIUM */}
+        {/* PREMIUM (mock: também vai para freemium) */}
         <div className="border border-amber-700 rounded-xl p-4 space-y-3">
           <h3 className="text-lg font-medium text-amber-400">
             Premium 👑
@@ -42,9 +40,8 @@ export default function Paywall({ onClose, onSelectPlan }) {
             <li>Acessibilidade avançada</li>
             <li>Controle de narração-opções de vozes</li>
             <li>1500 scans - sem bloqueios diários</li>
-            <li>BREVE LIBERAÇÃO PARA TESTES  </li>
+            <li>BREVE LIBERAÇÃO PARA TESTES</li>
           </ul>
-
           <button
             onClick={() => onSelectPlan("freemium")}
             className="w-full bg-amber-700 hover:bg-amber-600 py-2 rounded-lg text-sm font-semibold"

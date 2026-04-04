@@ -32,7 +32,6 @@ export const handler = async (event) => {
 
     // ================= AUTH =================
     const { data: authData } = await supabase.auth.getUser(token);
-
     if (!authData?.user) {
       return { statusCode: 401, body: JSON.stringify({ error: "invalid_token" }) };
     }
@@ -54,6 +53,16 @@ export const handler = async (event) => {
     let plan = (user.plan || "free").toLowerCase().trim();
     if (!limits[plan]) plan = "free";
 
+    // ================= MOCK FREEMIUM (BETA) =================
+    // 🔥 Isso resolve o loop que você estava tendo!
+    // Agora, mesmo que o banco ainda esteja como "free", o backend
+    // força o plano para "freemium" durante a fase de teste.
+    // Quando você liberar o Premium de verdade, é só apagar esse bloco.
+    if (plan === "free") {
+      plan = "freemium";
+      console.log("🔧 [BETA MOCK] Plano FREE forçado para FREEMIUM - modo teste ativo");
+    }
+
     let {
       usage = 0,
       daily_usage = 0,
@@ -66,7 +75,6 @@ export const handler = async (event) => {
 
     // 🔄 RESET DIÁRIO (REAL)
     const lastDaily = last_reset ? new Date(last_reset) : null;
-
     const isDifferentDay =
       !lastDaily ||
       now.getDate() !== lastDaily.getDate() ||
@@ -81,7 +89,6 @@ export const handler = async (event) => {
 
     // 🔄 RESET MENSAL
     const lastMonthly = monthly_reset ? new Date(monthly_reset) : null;
-
     const isDifferentMonth =
       !lastMonthly ||
       now.getMonth() !== lastMonthly.getMonth() ||
@@ -129,14 +136,12 @@ export const handler = async (event) => {
     // ================= PARSE FILE =================
     return await new Promise((resolve) => {
       const busboy = Busboy({ headers: event.headers });
-
       let imageBuffer = null;
       let mimeType = "image/png";
 
       busboy.on("file", (_, file, info) => {
         const chunks = [];
         mimeType = info.mimeType || "image/png";
-
         file.on("data", (d) => chunks.push(d));
         file.on("end", () => {
           imageBuffer = Buffer.concat(chunks);
@@ -174,18 +179,15 @@ export const handler = async (event) => {
 
           // ================= EXTRAÇÃO ROBUSTA =================
           let text = "";
-
           if (response.output_text) {
             text = response.output_text;
           } else if (response.output?.length) {
             const content = response.output[0]?.content;
-
             if (content?.length) {
               text = content.map(c => c.text || "").join(" ");
             }
           }
 
-          // 🔥 fallback absoluto
           text = text || "";
 
           // ================= INCREMENTO =================
@@ -215,10 +217,8 @@ export const handler = async (event) => {
               limits: planLimits,
             }),
           });
-
         } catch (err) {
           console.error("OCR ERROR:", err);
-
           resolve({
             statusCode: 500,
             body: JSON.stringify({ error: "ocr_failed" }),
@@ -228,13 +228,11 @@ export const handler = async (event) => {
 
       busboy.end(Buffer.from(event.body, "base64"));
     });
-
   } catch (err) {
     console.error("FATAL OCR ERROR:", err);
-
     return {
       statusCode: 500,
       body: JSON.stringify({ error: "server_error" }),
     };
   }
-  };
+};

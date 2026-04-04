@@ -14,7 +14,6 @@ import {
 import * as pdfjsLib from "pdfjs-dist";
 import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.js?url";
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
-
 import Paywall from "./components/Paywall";
 
 /* ================= CONFIG ================= */
@@ -25,7 +24,6 @@ const PLAN_LIMITS = {
   premium: { daily: null, monthly: 1500 },
 };
 const BETA_DISABLE_PREMIUM = true; // Premium congelado para testes beta
-
 const isMobile =
   typeof navigator !== "undefined" &&
   /Android|iPhone|iPad/i.test(navigator.userAgent);
@@ -124,11 +122,12 @@ export default function App() {
     if (showVoiceSettings) setTimeout(loadVoices, 300);
   }, [showVoiceSettings]);
 
-  // ================= WAKE LOCK + VISIBILITY (VERSÃO AGRESSIVA) =================
+  // ================= WAKE LOCK + VISIBILITY =================
   const requestWakeLock = async () => {
     if (!("wakeLock" in navigator)) return;
     try { wakeLockRef.current = await navigator.wakeLock.request("screen"); } catch {}
   };
+
   const releaseWakeLock = () => {
     if (wakeLockRef.current) {
       wakeLockRef.current.release();
@@ -178,25 +177,22 @@ export default function App() {
   }, [playerState]);
 
   // ================= RESET 24H =================
- useEffect(() => {
-  if (!usage.lastScan) return;
-
-  const last = new Date(usage.lastScan);
-  const now = new Date();
-
-  const isDifferentDay =
-    last.getDate() !== now.getDate() ||
-    last.getMonth() !== now.getMonth() ||
-    last.getFullYear() !== now.getFullYear();
-
-  if (isDifferentDay) {
-    setUsage(prev => ({
-      daily: 0,
-      monthly: prev.monthly,
-      lastScan: new Date().toISOString(),
-    }));
-  }
-}, [usage.lastScan]);
+  useEffect(() => {
+    if (!usage.lastScan) return;
+    const last = new Date(usage.lastScan);
+    const now = new Date();
+    const isDifferentDay =
+      last.getDate() !== now.getDate() ||
+      last.getMonth() !== now.getMonth() ||
+      last.getFullYear() !== now.getFullYear();
+    if (isDifferentDay) {
+      setUsage(prev => ({
+        daily: 0,
+        monthly: prev.monthly,
+        lastScan: new Date().toISOString(),
+      }));
+    }
+  }, [usage.lastScan]);
 
   // ================= SCROLL MARCAÇÃO =================
   useEffect(() => {
@@ -217,6 +213,7 @@ export default function App() {
     setHistory(prev => [item, ...prev]);
     setStatusMessage("✅ Arquivado no histórico");
   };
+
   const restoreFromHistory = (id) => {
     const item = history.find(h => h.id === id);
     if (!item) return;
@@ -224,6 +221,7 @@ export default function App() {
     setTexts(prev => [...prev, item]);
     setStatusMessage("✅ Restaurado!");
   };
+
   const permanentDelete = (id) => {
     if (!window.confirm("Excluir permanentemente?")) return;
     setHistory(prev => prev.filter(h => h.id !== id));
@@ -236,6 +234,7 @@ export default function App() {
       options: { redirectTo: window.location.origin },
     });
   };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setStatusMessage("✅ Conta desconectada com sucesso!");
@@ -299,6 +298,7 @@ export default function App() {
       .replace(/[ \t]{2,}/g, " ")
       .trim();
   }
+
   function splitIntoBlocks(text, maxLength = 120) {
     const lines = text.split(/\n+/);
     const blocks = [];
@@ -319,9 +319,11 @@ export default function App() {
     speechSynthesis.speak(u);
     warmedUpRef.current = true;
   }
+
   function getVoiceSettings() {
     return { rate: isPremium ? customRate : 1, pitch: isPremium ? customPitch : 1, volume: 1 };
   }
+
   function speakBlock(cardIndex) {
     const block = blocksRef.current[blockIndexRef.current];
     if (!block) return;
@@ -351,6 +353,7 @@ export default function App() {
     };
     speechSynthesis.speak(u);
   }
+
   function playFromStart(index) {
     speechSynthesis.cancel();
     requestWakeLock();
@@ -362,12 +365,14 @@ export default function App() {
     blockIndexRef.current = 0;
     speakBlock(index);
   }
+
   function pausePlayback(index) {
     if (activeCardIndex !== index) return;
     speechSynthesis.pause();
     setPlayerState("paused");
     setStatusMessage("Leitura pausada");
   }
+
   function resumePlayback(index) {
     if (activeCardIndex !== index && activeIndexRef.current !== index) return;
     if (!isMobile) {
@@ -395,6 +400,7 @@ export default function App() {
     speechSynthesis.speak(u);
     setPlayerState("playing");
   }
+
   function rewind(index) {
     if (activeCardIndex !== index || blockIndexRef.current === 0) return;
     setRewindFlash(true);
@@ -403,6 +409,7 @@ export default function App() {
     blockIndexRef.current -= 1;
     speakBlock(index);
   }
+
   function stopPlayback() {
     speechSynthesis.cancel();
     releaseWakeLock();
@@ -411,218 +418,112 @@ export default function App() {
     setActiveCardIndex(null);
     setCurrentSpeakingIndex(0);
   }
-// ================= HELPERS =================
- const hasDailyLimit = limits.daily !== null;
 
-// ================= OPEN PICKER =================
-const openScanner = () => {
-  if (!user) {
-    setStatusMessage("Faça login para escanear documentos.");
-    return;
-  }
+  // ================= HELPERS =================
+  const hasDailyLimit = limits.daily !== null;
 
-  if (hasDailyLimit && usage.daily >= limits.daily) {
-    setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
-    setShowPaywall(true);
-    return;
-  }
+  // ================= PAYWALL HANDLER (AGORA ATUALIZA BANCO DE DADOS) =================
+  const handleSelectPlan = async (selectedPlan) => {
+    setShowPaywall(false);
 
-  cameraInputRef.current?.click();
-};
+    if (selectedPlan === "freemium") {
+      if (plan === "freemium" || plan === "premium") {
+        // Já está no Freemium → limite atingido novamente
+        setStatusMessage("❌ Limite diário do Freemium atingido! Volte amanhã ou assine Premium para uso ilimitado.");
+      } else {
+        // PRIMEIRA ATIVAÇÃO: atualiza o plano NO BANCO e no estado
+        if (user) {
+          try {
+            const { error } = await supabase
+              .from("users")
+              .update({ plan: "freemium" })
+              .eq("id", user.id);
 
-const openImage = () => {
-  if (!user) {
-    setStatusMessage("Faça login para escanear documentos.");
-    return;
-  }
+            if (error) {
+              console.error("Erro ao salvar plano no banco:", error);
+            } else {
+              console.log("✅ Plano atualizado para freemium no Supabase");
+            }
+          } catch (err) {
+            console.error("Erro ao atualizar plano:", err);
+          }
+        }
 
-  if (hasDailyLimit && usage.daily >= limits.daily) {
-    setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
-    setShowPaywall(true);
-    return;
-  }
+        setPlan("freemium");
+        setStatusMessage("✅ Freemium ativado! (modo teste) - Limites ampliados. Pode continuar escaneando.");
+      }
+    }
+  };
 
-  imageInputRef.current?.click();
-};
-
-const openPdf = () => {
-  if (!user) {
-    setStatusMessage("Faça login para escanear documentos.");
-    return;
-  }
-
-  if (hasDailyLimit && usage.daily >= limits.daily) {
-    setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
-    setShowPaywall(true);
-    return;
-  }
-
-  pdfInputRef.current?.click();
-};
-
-// ================= OCR =================
-async function handleImageUpload(e) {
-  const file = e.target?.files?.[0];
-  if (!file) return;
-  await handleScan(file);
-  e.target.value = "";
-}
-
-async function handleScan(file) {
-  if (processingRef.current) return;
-
-  processingRef.current = true;
-
-  try {
-    setLoading(true);
-    setStatusMessage("Scan Pag. 1");
-
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return;
-
-    const formData = new FormData();
-    formData.append("file", file);
-
-    const res = await fetch("/.netlify/functions/ocr", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${session.access_token}` },
-      body: formData,
-    });
-
-    if (res.status === 403) {
-      setStatusMessage("❌ Limite atingido!");
+  // ================= OPEN PICKER =================
+  const openScanner = () => {
+    if (!user) {
+      setStatusMessage("Faça login para escanear documentos.");
+      return;
+    }
+    if (hasDailyLimit && usage.daily >= limits.daily) {
+      setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
       setShowPaywall(true);
       return;
     }
+    cameraInputRef.current?.click();
+  };
 
-    const data = await res.json();
-
-    if (data.usage) {
-      setUsage(prev => ({
-        daily: data.usage.daily ?? prev.daily,
-        monthly: data.usage.monthly ?? prev.monthly,
-        lastScan: prev.lastScan,
-      }));
+  const openImage = () => {
+    if (!user) {
+      setStatusMessage("Faça login para escanear documentos.");
+      return;
     }
-
-    if (data.text) {
-      const clean = sanitizeText(data.text);
-
-      if (clean.length > 10) {
-        const newEntry = {
-          id: `scan-${Date.now()}`,
-          text: clean,
-          timestamp: new Date().toISOString(),
-        };
-
-        setTexts(prev => [...prev, newEntry]);
-      }
+    if (hasDailyLimit && usage.daily >= limits.daily) {
+      setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
+      setShowPaywall(true);
+      return;
     }
+    imageInputRef.current?.click();
+  };
 
-    setStatusMessage("Escaneamento concluído!");
+  const openPdf = () => {
+    if (!user) {
+      setStatusMessage("Faça login para escanear documentos.");
+      return;
+    }
+    if (hasDailyLimit && usage.daily >= limits.daily) {
+      setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
+      setShowPaywall(true);
+      return;
+    }
+    pdfInputRef.current?.click();
+  };
 
-  } catch (err) {
-    console.error("SCAN ERROR:", err);
-    setStatusMessage("Erro ao escanear.");
-  } finally {
-    processingRef.current = false;
-    setLoading(false);
-  }
-}
-// ================= PDF =================
- //--HANDLE PDF — VERSÃO PRODUÇÃO
-
-async function handlePdfUpload(e) {
-  if (processingRef.current) return;
-
-  processingRef.current = true;
-  abortProcessingRef.current = false;
-
-  const file = e.target?.files?.[0];
-  if (!file) {
-    processingRef.current = false;
-    return;
+  // ================= OCR =================
+  async function handleImageUpload(e) {
+    const file = e.target?.files?.[0];
+    if (!file) return;
+    await handleScan(file);
+    e.target.value = "";
   }
 
-  try {
-    setLoading(true);
-
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return;
-
-    const buffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
-    const maxPages = pdf.numPages;
-
-    const hasDailyLimit = limits.daily !== null;
-
-    // 🔐 Validação limite diário
-    if (hasDailyLimit) {
-      const remaining = limits.daily - (usage.daily || 0);
-
-      if (maxPages > remaining) {
-        setStatusMessage(
-          `⚠️ Este PDF tem ${maxPages} páginas e você só pode escanear ${remaining} hoje.`
-        );
-
-        if (window.confirm("Deseja fazer upgrade?")) {
-          setShowPaywall(true);
-        }
-
-        processingRef.current = false;
-        setLoading(false);
-        e.target.value = "";
-        return;
-      }
-    }
-
-    // ✅ ACUMULADOR (ANTI TRAVAMENTO)
-    const newEntries = [];
-
-    for (let i = 1; i <= maxPages; i++) {
-      if (abortProcessingRef.current) break;
-
-      // 🔥 ANTI FREEZE DO BROWSER
-      await new Promise(r => setTimeout(r, 0));
-
-      setStatusMessage(`Scan Pag. ${i}/${maxPages}`);
-
-      const page = await pdf.getPage(i);
-
-      // 🔥 REDUZ CARGA
-      const viewport = page.getViewport({ scale: 1.2 });
-
-      const canvas = document.createElement("canvas");
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-
-      const ctx = canvas.getContext("2d");
-
-      await page.render({
-        canvasContext: ctx,
-        viewport
-      }).promise;
-
-      const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
-
+  async function handleScan(file) {
+    if (processingRef.current) return;
+    processingRef.current = true;
+    try {
+      setLoading(true);
+      setStatusMessage("Scan Pag. 1");
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
       const formData = new FormData();
-      formData.append("file", blob, `page-${i}.png`);
-
+      formData.append("file", file);
       const res = await fetch("/.netlify/functions/ocr", {
         method: "POST",
         headers: { Authorization: `Bearer ${session.access_token}` },
         body: formData,
       });
-
       if (res.status === 403) {
-        setStatusMessage("❌ Limite atingido! Aguarde reset ou faça upgrade.");
+        setStatusMessage("❌ Limite atingido!");
         setShowPaywall(true);
-        break;
+        return;
       }
-
       const data = await res.json();
-
-      // 🔄 ATUALIZA USO (SEM BAGUNÇAR ESTADO)
       if (data.usage) {
         setUsage(prev => ({
           daily: data.usage.daily ?? prev.daily,
@@ -630,46 +531,131 @@ async function handlePdfUpload(e) {
           lastScan: prev.lastScan,
         }));
       }
-
-      // 🧠 TEXTO OCR
       if (data.text) {
         const clean = sanitizeText(data.text);
-
-        // DEBUG (se precisar)
-        // console.log("OCR:", clean);
-
-        if (clean.length > 20) {
-          newEntries.push({
-            id: `scan-${Date.now()}-${i}`, // 🔥 ID único
+        if (clean.length > 10) {
+          const newEntry = {
+            id: `scan-${Date.now()}`,
             text: clean,
             timestamp: new Date().toISOString(),
-          });
+          };
+          setTexts(prev => [...prev, newEntry]);
         }
       }
+      setStatusMessage("Escaneamento concluído!");
+    } catch (err) {
+      console.error("SCAN ERROR:", err);
+      setStatusMessage("Erro ao escanear.");
+    } finally {
+      processingRef.current = false;
+      setLoading(false);
     }
-
-    // ✅ UM ÚNICO SETSTATE (CRÍTICO)
-    if (newEntries.length > 0) {
-      setTexts(prev => [...prev, ...newEntries]);
-    }
-
-    setStatusMessage("PDF processado com sucesso!");
-
-  } catch (err) {
-    console.error("PDF ERROR:", err);
-    setStatusMessage("Erro ao processar PDF.");
-  } finally {
-    processingRef.current = false;
-    setLoading(false);
-    e.target.value = "";
   }
-}
-// ================= CANCEL =================
-const cancelScan = () => {
-  abortProcessingRef.current = true;
-  setLoading(false);
-  setStatusMessage("Escaneamento cancelado.");
-};
+
+  // ================= PDF =================
+  async function handlePdfUpload(e) {
+    if (processingRef.current) return;
+    processingRef.current = true;
+    abortProcessingRef.current = false;
+    const file = e.target?.files?.[0];
+    if (!file) {
+      processingRef.current = false;
+      return;
+    }
+    try {
+      setLoading(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const buffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
+      const maxPages = pdf.numPages;
+      const hasDailyLimit = limits.daily !== null;
+
+      if (hasDailyLimit) {
+        const remaining = limits.daily - (usage.daily || 0);
+        if (maxPages > remaining) {
+          setStatusMessage(
+            `⚠️ Este PDF tem ${maxPages} páginas e você só pode escanear ${remaining} hoje.`
+          );
+          if (window.confirm("Deseja fazer upgrade?")) {
+            setShowPaywall(true);
+          }
+          processingRef.current = false;
+          setLoading(false);
+          e.target.value = "";
+          return;
+        }
+      }
+
+      const newEntries = [];
+      for (let i = 1; i <= maxPages; i++) {
+        if (abortProcessingRef.current) break;
+        await new Promise(r => setTimeout(r, 0));
+        setStatusMessage(`Scan Pag. ${i}/${maxPages}`);
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: 1.2 });
+        const canvas = document.createElement("canvas");
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext("2d");
+        await page.render({
+          canvasContext: ctx,
+          viewport
+        }).promise;
+        const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
+        const formData = new FormData();
+        formData.append("file", blob, `page-${i}.png`);
+        const res = await fetch("/.netlify/functions/ocr", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          body: formData,
+        });
+        if (res.status === 403) {
+          setStatusMessage("❌ Limite atingido! Aguarde reset ou faça upgrade.");
+          setShowPaywall(true);
+          break;
+        }
+        const data = await res.json();
+        if (data.usage) {
+          setUsage(prev => ({
+            daily: data.usage.daily ?? prev.daily,
+            monthly: data.usage.monthly ?? prev.monthly,
+            lastScan: prev.lastScan,
+          }));
+        }
+        if (data.text) {
+          const clean = sanitizeText(data.text);
+          if (clean.length > 20) {
+            newEntries.push({
+              id: `scan-${Date.now()}-${i}`,
+              text: clean,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        }
+      }
+
+      if (newEntries.length > 0) {
+        setTexts(prev => [...prev, ...newEntries]);
+      }
+      setStatusMessage("PDF processado com sucesso!");
+    } catch (err) {
+      console.error("PDF ERROR:", err);
+      setStatusMessage("Erro ao processar PDF.");
+    } finally {
+      processingRef.current = false;
+      setLoading(false);
+      e.target.value = "";
+    }
+  }
+
+  // ================= CANCEL =================
+  const cancelScan = () => {
+    abortProcessingRef.current = true;
+    setLoading(false);
+    setStatusMessage("Escaneamento cancelado.");
+  };
+
   if (!authChecked) {
     return <div className="min-h-screen flex items-center justify-center text-neutral-400">Verificando plano...</div>;
   }
@@ -680,19 +666,16 @@ const cancelScan = () => {
         <header className="text-center">
           <h1 className="text-2xl font-semibold">Heitor Reader</h1>
           <p className="text-sm opacity-70">Leitura assistida</p>
-
           {canUseAccessibility && (
             <button onClick={() => setAccessibilityMode(v => !v)} className={`mt-3 inline-flex items-center gap-2 px-4 py-1 rounded-full text-xs border ${accessibilityMode ? "bg-amber-700 border-amber-400 text-white" : "bg-neutral-700 border-neutral-600 text-neutral-300"}`}>
               👵 Modo 60+
             </button>
           )}
-
           {isPremium && (
             <button onClick={() => setShowVoiceSettings(!showVoiceSettings)} className="mt-2 text-xs px-4 py-1 rounded-full border border-amber-400 text-amber-400 hover:bg-amber-400 hover:text-neutral-950 transition">
               🔊 Voz Premium
             </button>
           )}
-
           {user && (
             <button onClick={handleLogout} className="mt-3 inline-flex items-center gap-2 px-4 py-1 rounded-full text-xs border border-red-500 text-red-400 hover:bg-red-500 hover:text-white transition">
               🚪 Sair da conta
@@ -754,7 +737,6 @@ const cancelScan = () => {
             const isActive = activeCardIndex === i;
             const isAccessibleActive = accessibilityMode && isActive;
             const isPlaying = playerState === "playing" && isActive;
-
             return (
               <div
                 key={entry.id}
@@ -778,7 +760,6 @@ const cancelScan = () => {
                     <ArchiveBoxIcon className="h-5 w-5 cursor-pointer text-blue-400 hover:text-blue-500" onClick={() => moveToHistory(entry.id)} />
                   </div>
                 </div>
-
                 <div className={`overflow-y-auto whitespace-pre-wrap ${accessibilityMode ? "text-base leading-relaxed max-h-60" : "text-xs max-h-40"}`}>
                   {isPlaying ? (
                     blocksRef.current.map((block, idx) => (
@@ -798,7 +779,6 @@ const cancelScan = () => {
                     entry.text
                   )}
                 </div>
-
                 {isActive && playerState === "playing" && (
                   <div className="text-green-400 text-xs mt-2 flex items-center gap-1">
                     🔊 Lendo bloco {currentSpeakingIndex + 1} / {blocksRef.current.length}
@@ -850,7 +830,13 @@ const cancelScan = () => {
         <div>{usage.monthly} / {limits.monthly} este mês</div>
       </footer>
 
-      {showPaywall && <Paywall onClose={() => setShowPaywall(false)} />}
+      {/* PAYWALL */}
+      {showPaywall && (
+        <Paywall
+          onClose={() => setShowPaywall(false)}
+          onSelectPlan={handleSelectPlan}
+        />
+      )}
     </div>
   );
 }
