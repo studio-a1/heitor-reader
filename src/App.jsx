@@ -23,7 +23,6 @@ const PLAN_LIMITS = {
   freemium: { daily: 20, monthly: 300 },
   premium: { daily: null, monthly: 1500 },
 };
-const BETA_DISABLE_PREMIUM = true; // Premium congelado para testes beta
 const isMobile =
   typeof navigator !== "undefined" &&
   /Android|iPhone|iPad/i.test(navigator.userAgent);
@@ -299,16 +298,46 @@ export default function App() {
       .trim();
   }
 
-  function splitIntoBlocks(text, maxLength = 120) {
-    const lines = text.split(/\n+/);
+  // ================= NOVO SPLITINTOBLOCKS (MAIS FLUIDO E ROBUSTO) =================
+  function splitIntoBlocks(text, maxLength = 160) {
+    if (!text) return [];
+    
+    let normalized = text.replace(/\n\s*\n/g, "\n\n").trim();
+    const paragraphs = normalized.split("\n\n");
     const blocks = [];
     let current = "";
-    for (const line of lines) {
-      if ((current + line).length <= maxLength) current += line + "\n";
-      else { blocks.push(current.trim()); current = line + "\n"; }
+
+    for (let para of paragraphs) {
+      para = para.trim();
+      if (!para) continue;
+
+      const sentences = para.match(/[^.!?]+[.!?]+[\s"']*|[^.!?]+$/g) || [para];
+
+      for (let sentence of sentences) {
+        sentence = sentence.trim();
+        if (!sentence) continue;
+
+        const next = current ? current + " " + sentence : sentence;
+
+        if (next.length <= maxLength) {
+          current = next;
+        } else {
+          if (current) blocks.push(current);
+          current = sentence;
+
+          while (current.length > maxLength) {
+            blocks.push(current.substring(0, maxLength));
+            current = current.substring(maxLength).trim();
+          }
+        }
+      }
+      if (current) {
+        blocks.push(current);
+        current = "";
+      }
     }
-    if (current.trim()) blocks.push(current.trim());
-    return blocks;
+
+    return blocks.filter(b => b.length > 3);
   }
 
   // ================= VOICE & PLAYER =================
@@ -327,6 +356,7 @@ export default function App() {
   function speakBlock(cardIndex) {
     const block = blocksRef.current[blockIndexRef.current];
     if (!block) return;
+
     const u = new SpeechSynthesisUtterance(block);
     const s = getVoiceSettings();
     if (isPremium && selectedVoiceURI) {
@@ -336,11 +366,14 @@ export default function App() {
     u.rate = accessibilityMode ? 0.7 : s.rate;
     u.pitch = accessibilityMode ? 0.9 : s.pitch;
     u.volume = s.volume;
+
     utteranceRef.current = u;
+
     u.onstart = () => {
       setPlayerState("playing");
       setCurrentSpeakingIndex(blockIndexRef.current);
     };
+
     u.onend = () => {
       blockIndexRef.current += 1;
       if (blockIndexRef.current < blocksRef.current.length) {
@@ -351,6 +384,7 @@ export default function App() {
         stopPlayback();
       }
     };
+
     speechSynthesis.speak(u);
   }
 
@@ -358,11 +392,14 @@ export default function App() {
     speechSynthesis.cancel();
     requestWakeLock();
     warmUpVoice();
+
     activeIndexRef.current = index;
     setActiveCardIndex(index);
+
     const clean = sanitizeText(texts[index].text);
-    blocksRef.current = splitIntoBlocks(clean);
+    blocksRef.current = splitIntoBlocks(clean);   // ← novo splitter
     blockIndexRef.current = 0;
+
     speakBlock(index);
   }
 
@@ -422,33 +459,25 @@ export default function App() {
   // ================= HELPERS =================
   const hasDailyLimit = limits.daily !== null;
 
-  // ================= PAYWALL HANDLER (AGORA ATUALIZA BANCO DE DADOS) =================
+  // ================= PAYWALL HANDLER =================
   const handleSelectPlan = async (selectedPlan) => {
     setShowPaywall(false);
 
     if (selectedPlan === "freemium") {
       if (plan === "freemium" || plan === "premium") {
-        // Já está no Freemium → limite atingido novamente
         setStatusMessage("❌ Limite diário do Freemium atingido! Volte amanhã ou assine Premium para uso ilimitado.");
       } else {
-        // PRIMEIRA ATIVAÇÃO: atualiza o plano NO BANCO e no estado
         if (user) {
           try {
             const { error } = await supabase
               .from("users")
               .update({ plan: "freemium" })
               .eq("id", user.id);
-
-            if (error) {
-              console.error("Erro ao salvar plano no banco:", error);
-            } else {
-              console.log("✅ Plano atualizado para freemium no Supabase");
-            }
+            if (error) console.error("Erro ao salvar plano:", error);
           } catch (err) {
             console.error("Erro ao atualizar plano:", err);
           }
         }
-
         setPlan("freemium");
         setStatusMessage("✅ Freemium ativado! (modo teste) - Limites ampliados. Pode continuar escaneando.");
       }
@@ -830,7 +859,6 @@ export default function App() {
         <div>{usage.monthly} / {limits.monthly} este mês</div>
       </footer>
 
-      {/* PAYWALL */}
       {showPaywall && (
         <Paywall
           onClose={() => setShowPaywall(false)}

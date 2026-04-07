@@ -31,6 +31,7 @@
         "npm:heroicons@^2.2.0",
         "npm:lucide-react@0.563",
         "npm:mammoth@^1.11.0",
+        "npm:netlify-cli@^24.10.0",
         "npm:netlify@^23.15.1",
         "npm:openai@^6.16.0",
         "npm:pdf-poppler@~0.2.3",

@@ -21,7 +21,7 @@
     "lucide-react": "^0.563.0",
     "mammoth": "^1.11.0",
     "netlify": "^23.15.1",
-    "netlify-cli": "^24.9.0",
+    "netlify-cli": "^24.10.0",
     "openai": "^6.16.0",
     "pdf-poppler": "^0.2.3",
     "pdfjs-dist": "^3.11.174",
