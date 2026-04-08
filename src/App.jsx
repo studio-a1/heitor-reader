@@ -23,9 +23,7 @@ const PLAN_LIMITS = {
   freemium: { daily: 20, monthly: 300 },
   premium: { daily: null, monthly: 1500 },
 };
-const isMobile =
-  typeof navigator !== "undefined" &&
-  /Android|iPhone|iPad/i.test(navigator.userAgent);
+const isMobile = typeof navigator !== "undefined" && /Android|iPhone|iPad/i.test(navigator.userAgent);
 
 export default function App() {
   // ================= STATES =================
@@ -139,23 +137,20 @@ export default function App() {
     else releaseWakeLock();
   }, [playerState]);
 
-  // ================= MEDIA SESSION (Lock Screen) =================
+  // ================= MEDIA SESSION =================
   const setupMediaSession = () => {
     if (!("mediaSession" in navigator)) return;
     navigator.mediaSession.metadata = new MediaMetadata({
       title: `Página ${activeCardIndex !== null ? activeCardIndex + 1 : 1}`,
       artist: "Heitor Reader",
-      album: "Leitura Assistida",
     });
     navigator.mediaSession.setActionHandler("play", () => resumePlayback(activeIndexRef.current));
     navigator.mediaSession.setActionHandler("pause", () => pausePlayback(activeIndexRef.current));
     navigator.mediaSession.setActionHandler("stop", stopPlayback);
-    navigator.mediaSession.setActionHandler("seekbackward", () => rewind(activeIndexRef.current));
   };
 
   const clearMediaSession = () => {
-    if (!("mediaSession" in navigator)) return;
-    navigator.mediaSession.metadata = null;
+    if ("mediaSession" in navigator) navigator.mediaSession.metadata = null;
   };
 
   // ================= VISIBILITY + BACKGROUND =================
@@ -293,10 +288,7 @@ export default function App() {
         setUser(null);
         setPlan(DEFAULT_PLAN);
         setUsage({ daily: 0, monthly: 0, lastScan: null });
-        setShowVoiceSettings(false);
-        setAccessibilityMode(false);
         setAuthChecked(true);
-        setStatusMessage("Escolha como deseja importar o conteúdo.");
       }
     });
 
@@ -484,9 +476,7 @@ export default function App() {
         setStatusMessage("❌ Limite diário do Freemium atingido! Volte amanhã ou assine Premium para uso ilimitado.");
       } else {
         if (user) {
-          try {
-            await supabase.from("users").update({ plan: "freemium" }).eq("id", user.id);
-          } catch (err) {}
+          await supabase.from("users").update({ plan: "freemium" }).eq("id", user.id);
         }
         setPlan("freemium");
         setStatusMessage("✅ Freemium ativado! (modo teste) - Limites ampliados. Pode continuar escaneando.");
