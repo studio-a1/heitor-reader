@@ -121,7 +121,7 @@ export default function App() {
     if (showVoiceSettings) setTimeout(loadVoices, 300);
   }, [showVoiceSettings]);
 
-  // ================= WAKE LOCK + VISIBILITY =================
+  // ================= WAKE LOCK =================
   const requestWakeLock = async () => {
     if (!("wakeLock" in navigator)) return;
     try { wakeLockRef.current = await navigator.wakeLock.request("screen"); } catch {}
@@ -139,6 +139,30 @@ export default function App() {
     else releaseWakeLock();
   }, [playerState]);
 
+  // ================= MEDIA SESSION (Lock Screen + Background Controls) =================
+  const setupMediaSession = () => {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: `Página ${activeCardIndex !== null ? activeCardIndex + 1 : 1}`,
+      artist: "Heitor Reader",
+      album: "Leitura Assistida",
+    });
+    navigator.mediaSession.setActionHandler("play", () => resumePlayback(activeIndexRef.current));
+    navigator.mediaSession.setActionHandler("pause", () => pausePlayback(activeIndexRef.current));
+    navigator.mediaSession.setActionHandler("stop", stopPlayback);
+    navigator.mediaSession.setActionHandler("seekbackward", () => rewind(activeIndexRef.current));
+  };
+
+  const clearMediaSession = () => {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.metadata = null;
+    navigator.mediaSession.setActionHandler("play", null);
+    navigator.mediaSession.setActionHandler("pause", null);
+    navigator.mediaSession.setActionHandler("stop", null);
+    navigator.mediaSession.setActionHandler("seekbackward", null);
+  };
+
+  // ================= VISIBILITY + FOCUS (melhorado) =================
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
@@ -288,6 +312,7 @@ export default function App() {
   function sanitizeText(text) {
     return text
       .replace(/[\[\]\(\)\{\}\*<>]/g, "")
+      .replace(/_+/g, " ")                    // ← remove todos os underlines
       .replace(/^NARRAÇÃO.*$/gim, "")
       .replace(/^Segue a transcrição.*$/gim, "")
       .replace(/^IA.*$/gim, "")
@@ -298,10 +323,8 @@ export default function App() {
       .trim();
   }
 
-  // ================= NOVO SPLITINTOBLOCKS (MAIS FLUIDO E ROBUSTO) =================
   function splitIntoBlocks(text, maxLength = 160) {
     if (!text) return [];
-    
     let normalized = text.replace(/\n\s*\n/g, "\n\n").trim();
     const paragraphs = normalized.split("\n\n");
     const blocks = [];
@@ -310,21 +333,16 @@ export default function App() {
     for (let para of paragraphs) {
       para = para.trim();
       if (!para) continue;
-
       const sentences = para.match(/[^.!?]+[.!?]+[\s"']*|[^.!?]+$/g) || [para];
-
       for (let sentence of sentences) {
         sentence = sentence.trim();
         if (!sentence) continue;
-
         const next = current ? current + " " + sentence : sentence;
-
         if (next.length <= maxLength) {
           current = next;
         } else {
           if (current) blocks.push(current);
           current = sentence;
-
           while (current.length > maxLength) {
             blocks.push(current.substring(0, maxLength));
             current = current.substring(maxLength).trim();
@@ -336,7 +354,6 @@ export default function App() {
         current = "";
       }
     }
-
     return blocks.filter(b => b.length > 3);
   }
 
@@ -372,6 +389,7 @@ export default function App() {
     u.onstart = () => {
       setPlayerState("playing");
       setCurrentSpeakingIndex(blockIndexRef.current);
+      setupMediaSession();
     };
 
     u.onend = () => {
@@ -397,7 +415,7 @@ export default function App() {
     setActiveCardIndex(index);
 
     const clean = sanitizeText(texts[index].text);
-    blocksRef.current = splitIntoBlocks(clean);   // ← novo splitter
+    blocksRef.current = splitIntoBlocks(clean);
     blockIndexRef.current = 0;
 
     speakBlock(index);
@@ -415,6 +433,7 @@ export default function App() {
     if (!isMobile) {
       speechSynthesis.resume();
       setPlayerState("playing");
+      setupMediaSession();
       return;
     }
     const block = blocksRef.current[blockIndexRef.current];
@@ -436,6 +455,7 @@ export default function App() {
     utteranceRef.current = u;
     speechSynthesis.speak(u);
     setPlayerState("playing");
+    setupMediaSession();
   }
 
   function rewind(index) {
@@ -450,6 +470,7 @@ export default function App() {
   function stopPlayback() {
     speechSynthesis.cancel();
     releaseWakeLock();
+    clearMediaSession();
     activeIndexRef.current = null;
     setPlayerState("idle");
     setActiveCardIndex(null);
@@ -459,24 +480,17 @@ export default function App() {
   // ================= HELPERS =================
   const hasDailyLimit = limits.daily !== null;
 
-  // ================= PAYWALL HANDLER =================
+  // ================= PAYWALL =================
   const handleSelectPlan = async (selectedPlan) => {
     setShowPaywall(false);
-
     if (selectedPlan === "freemium") {
       if (plan === "freemium" || plan === "premium") {
         setStatusMessage("❌ Limite diário do Freemium atingido! Volte amanhã ou assine Premium para uso ilimitado.");
       } else {
         if (user) {
           try {
-            const { error } = await supabase
-              .from("users")
-              .update({ plan: "freemium" })
-              .eq("id", user.id);
-            if (error) console.error("Erro ao salvar plano:", error);
-          } catch (err) {
-            console.error("Erro ao atualizar plano:", err);
-          }
+            await supabase.from("users").update({ plan: "freemium" }).eq("id", user.id);
+          } catch (err) {}
         }
         setPlan("freemium");
         setStatusMessage("✅ Freemium ativado! (modo teste) - Limites ampliados. Pode continuar escaneando.");
@@ -598,17 +612,13 @@ export default function App() {
       const buffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
       const maxPages = pdf.numPages;
-      const hasDailyLimit = limits.daily !== null;
+      const hasDailyLimitLocal = limits.daily !== null;
 
-      if (hasDailyLimit) {
+      if (hasDailyLimitLocal) {
         const remaining = limits.daily - (usage.daily || 0);
         if (maxPages > remaining) {
-          setStatusMessage(
-            `⚠️ Este PDF tem ${maxPages} páginas e você só pode escanear ${remaining} hoje.`
-          );
-          if (window.confirm("Deseja fazer upgrade?")) {
-            setShowPaywall(true);
-          }
+          setStatusMessage(`⚠️ Este PDF tem ${maxPages} páginas e você só pode escanear ${remaining} hoje.`);
+          if (window.confirm("Deseja fazer upgrade?")) setShowPaywall(true);
           processingRef.current = false;
           setLoading(false);
           e.target.value = "";
@@ -627,10 +637,7 @@ export default function App() {
         canvas.width = viewport.width;
         canvas.height = viewport.height;
         const ctx = canvas.getContext("2d");
-        await page.render({
-          canvasContext: ctx,
-          viewport
-        }).promise;
+        await page.render({ canvasContext: ctx, viewport }).promise;
         const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
         const formData = new FormData();
         formData.append("file", blob, `page-${i}.png`);
