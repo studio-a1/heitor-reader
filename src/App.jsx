@@ -139,7 +139,7 @@ export default function App() {
     else releaseWakeLock();
   }, [playerState]);
 
-  // ================= MEDIA SESSION (Lock Screen + Background Controls) =================
+  // ================= MEDIA SESSION (Lock Screen) =================
   const setupMediaSession = () => {
     if (!("mediaSession" in navigator)) return;
     navigator.mediaSession.metadata = new MediaMetadata({
@@ -156,13 +156,9 @@ export default function App() {
   const clearMediaSession = () => {
     if (!("mediaSession" in navigator)) return;
     navigator.mediaSession.metadata = null;
-    navigator.mediaSession.setActionHandler("play", null);
-    navigator.mediaSession.setActionHandler("pause", null);
-    navigator.mediaSession.setActionHandler("stop", null);
-    navigator.mediaSession.setActionHandler("seekbackward", null);
   };
 
-  // ================= VISIBILITY + FOCUS (melhorado) =================
+  // ================= VISIBILITY + BACKGROUND =================
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
@@ -312,7 +308,7 @@ export default function App() {
   function sanitizeText(text) {
     return text
       .replace(/[\[\]\(\)\{\}\*<>]/g, "")
-      .replace(/_+/g, " ")                    // ← remove todos os underlines
+      .replace(/_+/g, " ")
       .replace(/^NARRAÇÃO.*$/gim, "")
       .replace(/^Segue a transcrição.*$/gim, "")
       .replace(/^IA.*$/gim, "")
