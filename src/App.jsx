@@ -1,3 +1,4 @@
+import NoSleep from 'nosleep.js';   // npm install nosleep.js
 import { supabase } from "./lib/supabase";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -56,6 +57,7 @@ export default function App() {
   const canUseAccessibility = plan === "freemium" || plan === "premium";
 
   /* ================= REFS ================= */
+  const noSleepRef = useRef(null);
   const utteranceRef = useRef(null);
   const blocksRef = useRef([]);
   const blockIndexRef = useRef(0);
@@ -97,7 +99,7 @@ export default function App() {
   useEffect(() => {
     if (isPremium && selectedVoiceURI) localStorage.setItem("heitor-premium-voice", selectedVoiceURI);
   }, [selectedVoiceURI, isPremium]);
-
+  
   // ================= VOZES =================
   const loadVoices = () => {
     const available = speechSynthesis.getVoices().filter(v => v.lang.startsWith("pt"));
@@ -156,17 +158,19 @@ export default function App() {
   // ================= VISIBILITY + BACKGROUND =================
   useEffect(() => {
     const handleVisibility = () => {
-      if (document.visibilityState === "visible") {
-        requestWakeLock();
-        if (wasPlayingBeforeBackgroundRef.current && activeIndexRef.current !== null) {
-          resumePlayback(activeIndexRef.current);
-          wasPlayingBeforeBackgroundRef.current = false;
-        }
-      } else if (playerState === "playing") {
-        wasPlayingBeforeBackgroundRef.current = true;
-      }
-    };
-
+  if (document.visibilityState === "visible") {
+    requestWakeLock();
+    if (noSleepRef.current) noSleepRef.current.enable();
+    if (wasPlayingBeforeBackgroundRef.current && activeIndexRef.current !== null) {
+      resumePlayback(activeIndexRef.current);
+      wasPlayingBeforeBackgroundRef.current = false;
+    }
+  } else {
+    if (playerState === "playing") {
+      wasPlayingBeforeBackgroundRef.current = true;
+    }
+  }
+};
     const handleFocus = () => {
       if (playerState === "playing" && activeIndexRef.current !== null) {
         resumePlayback(activeIndexRef.current);
@@ -189,6 +193,15 @@ export default function App() {
       window.removeEventListener("pageshow", handlePageShow);
     };
   }, [playerState]);
+  
+  // ================= NO SLEEP (evita tela apagar) =================
+useEffect(() => {
+  noSleepRef.current = new NoSleep();
+  
+  return () => {
+    if (noSleepRef.current) noSleepRef.current.disable();
+  };
+}, []);
 
   // ================= RESET 24H =================
   useEffect(() => {
@@ -394,77 +407,59 @@ export default function App() {
     speechSynthesis.speak(u);
   }
 
+  
   function playFromStart(index) {
-    speechSynthesis.cancel();
-    requestWakeLock();
-    warmUpVoice();
+  speechSynthesis.cancel();
+  requestWakeLock();
+  warmUpVoice();
+  if (noSleepRef.current) noSleepRef.current.enable();   // ← NOVO
 
-    activeIndexRef.current = index;
-    setActiveCardIndex(index);
+  activeIndexRef.current = index;
+  setActiveCardIndex(index);
+  const clean = sanitizeText(texts[index].text);
+  blocksRef.current = splitIntoBlocks(clean);
+  blockIndexRef.current = 0;
+  speakBlock(index);
+}
 
-    const clean = sanitizeText(texts[index].text);
-    blocksRef.current = splitIntoBlocks(clean);
-    blockIndexRef.current = 0;
+function pausePlayback(index) {
+  if (activeCardIndex !== index) return;
+  speechSynthesis.pause();
+  setPlayerState("paused");
+  if (noSleepRef.current) noSleepRef.current.disable();   // ← NOVO
+  setStatusMessage("Leitura pausada");
+}
 
-    speakBlock(index);
-  }
+function resumePlayback(index) {
+  if (activeCardIndex !== index && activeIndexRef.current !== index) return;
+  
+  if (noSleepRef.current) noSleepRef.current.enable();   // ← NOVO
+  requestWakeLock();
 
-  function pausePlayback(index) {
-    if (activeCardIndex !== index) return;
-    speechSynthesis.pause();
-    setPlayerState("paused");
-    setStatusMessage("Leitura pausada");
-  }
-
-  function resumePlayback(index) {
-    if (activeCardIndex !== index && activeIndexRef.current !== index) return;
-    if (!isMobile) {
-      speechSynthesis.resume();
-      setPlayerState("playing");
-      setupMediaSession();
-      return;
-    }
-    const block = blocksRef.current[blockIndexRef.current];
-    if (!block) return;
-    const u = new SpeechSynthesisUtterance(block);
-    const s = getVoiceSettings();
-    if (isPremium && selectedVoiceURI) {
-      const chosen = voices.find(v => v.voiceURI === selectedVoiceURI);
-      if (chosen) u.voice = chosen;
-    }
-    u.rate = accessibilityMode ? 0.7 : s.rate;
-    u.pitch = accessibilityMode ? 0.9 : s.pitch;
-    u.volume = s.volume;
-    u.onend = () => {
-      blockIndexRef.current += 1;
-      if (blockIndexRef.current < blocksRef.current.length) speakBlock(index);
-      else stopPlayback();
-    };
-    utteranceRef.current = u;
-    speechSynthesis.speak(u);
+  if (!isMobile) {
+    speechSynthesis.resume();
     setPlayerState("playing");
     setupMediaSession();
+    return;
   }
 
-  function rewind(index) {
-    if (activeCardIndex !== index || blockIndexRef.current === 0) return;
-    setRewindFlash(true);
-    setTimeout(() => setRewindFlash(false), 200);
-    speechSynthesis.cancel();
-    blockIndexRef.current -= 1;
-    speakBlock(index);
-  }
+  // mobile: recria utterance (já estava bom, só reforçando)
+  const block = blocksRef.current[blockIndexRef.current];
+  if (!block) return;
+  const u = new SpeechSynthesisUtterance(block);
+  // ... resto do código de resume que você já tem ...
+}
 
-  function stopPlayback() {
-    speechSynthesis.cancel();
-    releaseWakeLock();
-    clearMediaSession();
-    activeIndexRef.current = null;
-    setPlayerState("idle");
-    setActiveCardIndex(null);
-    setCurrentSpeakingIndex(0);
-  }
-
+function stopPlayback() {
+  speechSynthesis.cancel();
+  releaseWakeLock();
+  if (noSleepRef.current) noSleepRef.current.disable();   // ← NOVO
+  clearMediaSession();
+  activeIndexRef.current = null;
+  setPlayerState("idle");
+  setActiveCardIndex(null);
+  setCurrentSpeakingIndex(0);
+}
   // ================= HELPERS =================
   const hasDailyLimit = limits.daily !== null;
 
