@@ -1,4 +1,4 @@
-import NoSleep from 'nosleep.js';   // npm install nosleep.js
+import NoSleep from 'nosleep.js';
 import { supabase } from "./lib/supabase";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -57,6 +57,7 @@ export default function App() {
   const canUseAccessibility = plan === "freemium" || plan === "premium";
 
   /* ================= REFS ================= */
+  const noSleepVideoRef = useRef(null);
   const noSleepRef = useRef(null);
   const utteranceRef = useRef(null);
   const blocksRef = useRef([]);
@@ -139,6 +140,28 @@ export default function App() {
     else releaseWakeLock();
   }, [playerState]);
 
+// ================= NO SLEEP SELF-CONTAINED (sem npm) =================
+useEffect(() => {
+  const video = document.createElement("video");
+  video.src = "https://cdn.jsdelivr.net/gh/richtr/NoSleep.js@latest/example/silent.mp4"; // vídeo silencioso público (1s em loop)
+  video.loop = true;
+  video.muted = true;
+  video.playsInline = true;
+  video.volume = 0;
+  video.style.display = "none";
+  document.body.appendChild(video); // adiciona escondido
+
+  noSleepVideoRef.current = video;
+
+  return () => {
+    if (video) {
+      video.pause();
+      video.remove();
+    }
+  };
+}, []);
+
+
   // ================= MEDIA SESSION =================
   const setupMediaSession = () => {
     if (!("mediaSession" in navigator)) return;
@@ -157,25 +180,19 @@ export default function App() {
 
   // ================= VISIBILITY + BACKGROUND =================
   useEffect(() => {
-    const handleVisibility = () => {
+   
+   const handleVisibility = () => {
   if (document.visibilityState === "visible") {
     requestWakeLock();
-    if (noSleepRef.current) noSleepRef.current.enable();
+    if (noSleepVideoRef.current) noSleepVideoRef.current.play().catch(() => {});
     if (wasPlayingBeforeBackgroundRef.current && activeIndexRef.current !== null) {
       resumePlayback(activeIndexRef.current);
       wasPlayingBeforeBackgroundRef.current = false;
     }
-  } else {
-    if (playerState === "playing") {
-      wasPlayingBeforeBackgroundRef.current = true;
-    }
+  } else if (playerState === "playing") {
+    wasPlayingBeforeBackgroundRef.current = true;
   }
 };
-    const handleFocus = () => {
-      if (playerState === "playing" && activeIndexRef.current !== null) {
-        resumePlayback(activeIndexRef.current);
-      }
-    };
 
     const handlePageShow = (e) => {
       if (e.persisted && playerState === "playing" && activeIndexRef.current !== null) {
@@ -408,12 +425,16 @@ useEffect(() => {
   }
 
   
-  function playFromStart(index) {
+function playFromStart(index) {
   speechSynthesis.cancel();
   requestWakeLock();
-  warmUpVoice();
-  if (noSleepRef.current) noSleepRef.current.enable();   // ← NOVO
 
+  // Ativa NoSleep
+  if (noSleepVideoRef.current) {
+    noSleepVideoRef.current.play().catch(() => {});
+  }
+
+  warmUpVoice();
   activeIndexRef.current = index;
   setActiveCardIndex(index);
   const clean = sanitizeText(texts[index].text);
@@ -426,14 +447,15 @@ function pausePlayback(index) {
   if (activeCardIndex !== index) return;
   speechSynthesis.pause();
   setPlayerState("paused");
-  if (noSleepRef.current) noSleepRef.current.disable();   // ← NOVO
+  if (noSleepVideoRef.current) noSleepVideoRef.current.pause();
   setStatusMessage("Leitura pausada");
 }
 
 function resumePlayback(index) {
   if (activeCardIndex !== index && activeIndexRef.current !== index) return;
-  
-  if (noSleepRef.current) noSleepRef.current.enable();   // ← NOVO
+
+  // Reativa NoSleep + wakeLock
+  if (noSleepVideoRef.current) noSleepVideoRef.current.play().catch(() => {});
   requestWakeLock();
 
   if (!isMobile) {
@@ -443,17 +465,17 @@ function resumePlayback(index) {
     return;
   }
 
-  // mobile: recria utterance (já estava bom, só reforçando)
+  // resto do seu resume original (o que recria o utterance)...
   const block = blocksRef.current[blockIndexRef.current];
   if (!block) return;
   const u = new SpeechSynthesisUtterance(block);
-  // ... resto do código de resume que você já tem ...
+  // ... (mantenha o resto igual)
 }
 
 function stopPlayback() {
   speechSynthesis.cancel();
   releaseWakeLock();
-  if (noSleepRef.current) noSleepRef.current.disable();   // ← NOVO
+  if (noSleepVideoRef.current) noSleepVideoRef.current.pause();
   clearMediaSession();
   activeIndexRef.current = null;
   setPlayerState("idle");
