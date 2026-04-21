@@ -59,6 +59,7 @@ export default function App() {
   /* ================= REFS ================= */
   const noSleepVideoRef = useRef(null);
   const noSleepRef = useRef(null);
+  const noSleepAudioRef = useRef(null);
   const utteranceRef = useRef(null);
   const blocksRef = useRef([]);
   const blockIndexRef = useRef(0);
@@ -74,21 +75,54 @@ export default function App() {
   const wasPlayingBeforeBackgroundRef = useRef(false);
 
   // ================= PERSISTÊNCIA =================
-  useEffect(() => {
-    if (!authChecked) return;
-    const prefix = user ? `heitor-reader-${user.id}` : "heitor-reader-anon";
-    const savedTexts = localStorage.getItem(`${prefix}-texts`);
-    const savedHistory = localStorage.getItem(`${prefix}-history`);
-    if (savedTexts) try { setTexts(JSON.parse(savedTexts)); } catch {}
-    if (savedHistory) try { setHistory(JSON.parse(savedHistory)); } catch {}
-  }, [authChecked, user]);
+  // ================= PERSISTÊNCIA DO PONTO DE LEITURA =================
+useEffect(() => {
+  if (!authChecked) return;
+  const prefix = user ? `heitor-reader-${user.id}` : "heitor-reader-anon";
+  const savedPlayback = localStorage.getItem(`${prefix}-playback`);
+  if (savedPlayback) {
+    const { activeIndex, blockIndex } = JSON.parse(savedPlayback);
+    if (activeIndex !== null && texts[activeIndex]) {
+      activeIndexRef.current = activeIndex;
+      blockIndexRef.current = blockIndex || 0;
+      setActiveCardIndex(activeIndex);
+      // não inicia automaticamente, mas o usuário pode dar play e ele continua do ponto
+    }
+  }
+}, [authChecked, user, texts]);
 
-  useEffect(() => {
-    const prefix = user ? `heitor-reader-${user.id}` : "heitor-reader-anon";
-    localStorage.setItem(`${prefix}-texts`, JSON.stringify(texts));
-    localStorage.setItem(`${prefix}-history`, JSON.stringify(history));
-  }, [texts, history, user]);
+// ================= AUTH REFRESH (evita desconectar ao voltar) =================
+useEffect(() => {
+  const refreshAuth = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session && (!user || user.id !== session.user.id)) {
+      // recarrega dados do usuário
+      await loadUserData(session); // se loadUserData estiver no escopo, ou chame a lógica
+    }
+  };
 
+  window.addEventListener("focus", refreshAuth);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshAuth();
+  });
+
+  return () => {
+    window.removeEventListener("focus", refreshAuth);
+  };
+}, [user]);
+
+// Salva sempre que muda
+useEffect(() => {
+  const prefix = user ? `heitor-reader-${user.id}` : "heitor-reader-anon";
+  if (activeIndexRef.current !== null) {
+    localStorage.setItem(`${prefix}-playback`, JSON.stringify({
+      activeIndex: activeIndexRef.current,
+      blockIndex: blockIndexRef.current,
+    }));
+  } else {
+    localStorage.removeItem(`${prefix}-playback`);
+  }
+}, [activeIndexRef.current, blockIndexRef.current, user]);
   // ================= VOZ PREMIUM =================
   useEffect(() => {
     if (isPremium) {
@@ -139,6 +173,26 @@ export default function App() {
     if (playerState === "playing") requestWakeLock();
     else releaseWakeLock();
   }, [playerState]);
+
+// ================= NO SLEEP ÁUDIO SILENCIOSO (self-contained) =================
+useEffect(() => {
+  const audio = document.createElement("audio");
+  audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+  audio.loop = true;
+  audio.muted = true;
+  audio.volume = 0;
+  audio.style.display = "none";
+  document.body.appendChild(audio);
+
+  noSleepAudioRef.current = audio;
+
+  return () => {
+    if (audio) {
+      audio.pause();
+      audio.remove();
+    }
+  };
+}, []);
 
 // ================= NO SLEEP SELF-CONTAINED (sem npm) =================
 useEffect(() => {
@@ -198,7 +252,7 @@ useEffect(() => {
   };
 }, []);
      
-   // ================= VISIBILITY + BACKGROUND + NO SLEEP =================
+// ================= VISIBILITY + BACKGROUND + NO SLEEP =================
 useEffect(() => {
   const handleVisibility = () => {
     if (document.visibilityState === "visible") {
@@ -236,7 +290,7 @@ useEffect(() => {
     window.removeEventListener("focus", handleFocus);
     window.removeEventListener("pageshow", handlePageShow);
   };
-}, [playerState]);   // ← mantém a dependência original
+}, [playerState]);
   // ================= NO SLEEP (evita tela apagar) =================
 useEffect(() => {
   noSleepRef.current = new NoSleep();
@@ -454,11 +508,7 @@ useEffect(() => {
 function playFromStart(index) {
   speechSynthesis.cancel();
   requestWakeLock();
-
-  // Ativa NoSleep
-  if (noSleepVideoRef.current) {
-    noSleepVideoRef.current.play().catch(() => {});
-  }
+  if (noSleepAudioRef.current) noSleepAudioRef.current.play().catch(() => {});
 
   warmUpVoice();
   activeIndexRef.current = index;
@@ -473,8 +523,57 @@ function pausePlayback(index) {
   if (activeCardIndex !== index) return;
   speechSynthesis.pause();
   setPlayerState("paused");
-  if (noSleepVideoRef.current) noSleepVideoRef.current.pause();
+  if (noSleepAudioRef.current) noSleepAudioRef.current.pause();
   setStatusMessage("Leitura pausada");
+}
+
+function resumePlayback(index) {
+  if (activeIndexRef.current !== index && activeCardIndex !== index) return;
+
+  if (noSleepAudioRef.current) noSleepAudioRef.current.play().catch(() => {});
+  requestWakeLock();
+
+  if (!isMobile) {
+    speechSynthesis.resume();
+    setPlayerState("playing");
+    setupMediaSession();
+    return;
+  }
+
+  const block = blocksRef.current[blockIndexRef.current];
+  if (!block) return;
+
+  const u = new SpeechSynthesisUtterance(block);
+  const s = getVoiceSettings();
+  if (isPremium && selectedVoiceURI) {
+    const chosen = voices.find(v => v.voiceURI === selectedVoiceURI);
+    if (chosen) u.voice = chosen;
+  }
+  u.rate = accessibilityMode ? 0.7 : s.rate;
+  u.pitch = accessibilityMode ? 0.9 : s.pitch;
+  u.volume = s.volume;
+
+  u.onend = () => {
+    blockIndexRef.current += 1;
+    if (blockIndexRef.current < blocksRef.current.length) speakBlock(index);
+    else stopPlayback();
+  };
+
+  utteranceRef.current = u;
+  speechSynthesis.speak(u);
+  setPlayerState("playing");
+  setupMediaSession();
+}
+
+function stopPlayback() {
+  speechSynthesis.cancel();
+  releaseWakeLock();
+  if (noSleepAudioRef.current) noSleepAudioRef.current.pause();
+  clearMediaSession();
+  activeIndexRef.current = null;
+  setPlayerState("idle");
+  setActiveCardIndex(null);
+  setCurrentSpeakingIndex(0);
 }
 
 function resumePlayback(index) {
