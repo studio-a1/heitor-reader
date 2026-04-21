@@ -177,40 +177,66 @@ useEffect(() => {
   const clearMediaSession = () => {
     if ("mediaSession" in navigator) navigator.mediaSession.metadata = null;
   };
-
-  // ================= VISIBILITY + BACKGROUND =================
-  useEffect(() => {
    
-   const handleVisibility = () => {
-  if (document.visibilityState === "visible") {
-    requestWakeLock();
-    if (noSleepVideoRef.current) noSleepVideoRef.current.play().catch(() => {});
-    if (wasPlayingBeforeBackgroundRef.current && activeIndexRef.current !== null) {
-      resumePlayback(activeIndexRef.current);
-      wasPlayingBeforeBackgroundRef.current = false;
+    useEffect(() => {
+  const video = document.createElement("video");
+  video.src = "https://cdn.jsdelivr.net/gh/richtr/NoSleep.js@latest/example/silent.mp4";
+  video.loop = true;
+  video.muted = true;
+  video.playsInline = true;
+  video.volume = 0;
+  video.style.display = "none";
+  document.body.appendChild(video);
+
+  noSleepVideoRef.current = video;
+
+  return () => {
+    if (video) {
+      video.pause();
+      video.remove();
     }
-  } else if (playerState === "playing") {
-    wasPlayingBeforeBackgroundRef.current = true;
-  }
-};
-
-    const handlePageShow = (e) => {
-      if (e.persisted && playerState === "playing" && activeIndexRef.current !== null) {
-        resumePlayback(activeIndexRef.current);
+  };
+}, []);
+     
+   // ================= VISIBILITY + BACKGROUND + NO SLEEP =================
+useEffect(() => {
+  const handleVisibility = () => {
+    if (document.visibilityState === "visible") {
+      requestWakeLock();
+      if (noSleepVideoRef.current) {
+        noSleepVideoRef.current.play().catch(() => {});
       }
-    };
+      if (wasPlayingBeforeBackgroundRef.current && activeIndexRef.current !== null) {
+        resumePlayback(activeIndexRef.current);
+        wasPlayingBeforeBackgroundRef.current = false;
+      }
+    } else if (playerState === "playing") {
+      wasPlayingBeforeBackgroundRef.current = true;
+    }
+  };
 
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("focus", handleFocus);
-    window.addEventListener("pageshow", handlePageShow);
+  const handleFocus = () => {
+    if (playerState === "playing" && activeIndexRef.current !== null) {
+      resumePlayback(activeIndexRef.current);
+    }
+  };
 
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("focus", handleFocus);
-      window.removeEventListener("pageshow", handlePageShow);
-    };
-  }, [playerState]);
-  
+  const handlePageShow = (e) => {
+    if (e.persisted && playerState === "playing" && activeIndexRef.current !== null) {
+      resumePlayback(activeIndexRef.current);
+    }
+  };
+
+  document.addEventListener("visibilitychange", handleVisibility);
+  window.addEventListener("focus", handleFocus);
+  window.addEventListener("pageshow", handlePageShow);
+
+  return () => {
+    document.removeEventListener("visibilitychange", handleVisibility);
+    window.removeEventListener("focus", handleFocus);
+    window.removeEventListener("pageshow", handlePageShow);
+  };
+}, [playerState]);   // ← mantém a dependência original
   // ================= NO SLEEP (evita tela apagar) =================
 useEffect(() => {
   noSleepRef.current = new NoSleep();
