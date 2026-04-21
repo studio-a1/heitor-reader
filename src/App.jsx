@@ -1,4 +1,4 @@
-import NoSleep from 'nosleep.js';   // npm install nosleep.js
+import NoSleep from 'nosleep.js';
 import { supabase } from "./lib/supabase";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -58,6 +58,7 @@ export default function App() {
 
   /* ================= REFS ================= */
   const noSleepRef = useRef(null);
+  const silenceAudioRef = useRef(null);         // ← NOVO: áudio silencioso para keep-alive
   const utteranceRef = useRef(null);
   const blocksRef = useRef([]);
   const blockIndexRef = useRef(0);
@@ -99,7 +100,7 @@ export default function App() {
   useEffect(() => {
     if (isPremium && selectedVoiceURI) localStorage.setItem("heitor-premium-voice", selectedVoiceURI);
   }, [selectedVoiceURI, isPremium]);
-  
+
   // ================= VOZES =================
   const loadVoices = () => {
     const available = speechSynthesis.getVoices().filter(v => v.lang.startsWith("pt"));
@@ -120,6 +121,25 @@ export default function App() {
   useEffect(() => {
     if (showVoiceSettings) setTimeout(loadVoices, 300);
   }, [showVoiceSettings]);
+
+  // ================= NO SLEEP + SILENCE AUDIO =================
+  useEffect(() => {
+    // NoSleep.js — evita tela apagar
+    noSleepRef.current = new NoSleep();
+
+    // Áudio silencioso em loop — mantém o contexto de mídia vivo no background
+    // volume 0.001: quase zero mas não zero (zero seria ignorado pelo browser)
+    const audio = new Audio("/silence.mp3");
+    audio.loop = true;
+    audio.volume = 0.001;
+    silenceAudioRef.current = audio;
+
+    return () => {
+      if (noSleepRef.current) noSleepRef.current.disable();
+      audio.pause();
+      audio.src = "";
+    };
+  }, []);
 
   // ================= WAKE LOCK =================
   const requestWakeLock = async () => {
@@ -158,19 +178,24 @@ export default function App() {
   // ================= VISIBILITY + BACKGROUND =================
   useEffect(() => {
     const handleVisibility = () => {
-  if (document.visibilityState === "visible") {
-    requestWakeLock();
-    if (noSleepRef.current) noSleepRef.current.enable();
-    if (wasPlayingBeforeBackgroundRef.current && activeIndexRef.current !== null) {
-      resumePlayback(activeIndexRef.current);
-      wasPlayingBeforeBackgroundRef.current = false;
-    }
-  } else {
-    if (playerState === "playing") {
-      wasPlayingBeforeBackgroundRef.current = true;
-    }
-  }
-};
+      if (document.visibilityState === "visible") {
+        requestWakeLock();
+        if (noSleepRef.current) noSleepRef.current.enable();
+        // Retoma o silence se estava tocando
+        if (silenceAudioRef.current && wasPlayingBeforeBackgroundRef.current) {
+          silenceAudioRef.current.play().catch(() => {});
+        }
+        if (wasPlayingBeforeBackgroundRef.current && activeIndexRef.current !== null) {
+          resumePlayback(activeIndexRef.current);
+          wasPlayingBeforeBackgroundRef.current = false;
+        }
+      } else {
+        if (playerState === "playing") {
+          wasPlayingBeforeBackgroundRef.current = true;
+        }
+      }
+    };
+
     const handleFocus = () => {
       if (playerState === "playing" && activeIndexRef.current !== null) {
         resumePlayback(activeIndexRef.current);
@@ -193,15 +218,6 @@ export default function App() {
       window.removeEventListener("pageshow", handlePageShow);
     };
   }, [playerState]);
-  
-  // ================= NO SLEEP (evita tela apagar) =================
-useEffect(() => {
-  noSleepRef.current = new NoSleep();
-  
-  return () => {
-    if (noSleepRef.current) noSleepRef.current.disable();
-  };
-}, []);
 
   // ================= RESET 24H =================
   useEffect(() => {
@@ -407,59 +423,106 @@ useEffect(() => {
     speechSynthesis.speak(u);
   }
 
-  
   function playFromStart(index) {
-  speechSynthesis.cancel();
-  requestWakeLock();
-  warmUpVoice();
-  if (noSleepRef.current) noSleepRef.current.enable();   // ← NOVO
+    speechSynthesis.cancel();
+    requestWakeLock();
+    warmUpVoice();
+    if (noSleepRef.current) noSleepRef.current.enable();
 
-  activeIndexRef.current = index;
-  setActiveCardIndex(index);
-  const clean = sanitizeText(texts[index].text);
-  blocksRef.current = splitIntoBlocks(clean);
-  blockIndexRef.current = 0;
-  speakBlock(index);
-}
+    // Inicia o áudio silencioso — mantém contexto de mídia vivo no background
+    if (silenceAudioRef.current) {
+      silenceAudioRef.current.play().catch(() => {});
+    }
 
-function pausePlayback(index) {
-  if (activeCardIndex !== index) return;
-  speechSynthesis.pause();
-  setPlayerState("paused");
-  if (noSleepRef.current) noSleepRef.current.disable();   // ← NOVO
-  setStatusMessage("Leitura pausada");
-}
-
-function resumePlayback(index) {
-  if (activeCardIndex !== index && activeIndexRef.current !== index) return;
-  
-  if (noSleepRef.current) noSleepRef.current.enable();   // ← NOVO
-  requestWakeLock();
-
-  if (!isMobile) {
-    speechSynthesis.resume();
-    setPlayerState("playing");
-    setupMediaSession();
-    return;
+    activeIndexRef.current = index;
+    setActiveCardIndex(index);
+    const clean = sanitizeText(texts[index].text);
+    blocksRef.current = splitIntoBlocks(clean);
+    blockIndexRef.current = 0;
+    speakBlock(index);
   }
 
-  // mobile: recria utterance (já estava bom, só reforçando)
-  const block = blocksRef.current[blockIndexRef.current];
-  if (!block) return;
-  const u = new SpeechSynthesisUtterance(block);
-  // ... resto do código de resume que você já tem ...
-}
+  function pausePlayback(index) {
+    if (activeCardIndex !== index) return;
+    speechSynthesis.pause();
+    setPlayerState("paused");
+    if (noSleepRef.current) noSleepRef.current.disable();
+    // Mantém o silence rodando mesmo pausado — facilita o resume
+    setStatusMessage("Leitura pausada");
+  }
 
-function stopPlayback() {
-  speechSynthesis.cancel();
-  releaseWakeLock();
-  if (noSleepRef.current) noSleepRef.current.disable();   // ← NOVO
-  clearMediaSession();
-  activeIndexRef.current = null;
-  setPlayerState("idle");
-  setActiveCardIndex(null);
-  setCurrentSpeakingIndex(0);
-}
+  function resumePlayback(index) {
+    if (activeCardIndex !== index && activeIndexRef.current !== index) return;
+
+    if (noSleepRef.current) noSleepRef.current.enable();
+    requestWakeLock();
+
+    // Reativa o silence ao retomar
+    if (silenceAudioRef.current) {
+      silenceAudioRef.current.play().catch(() => {});
+    }
+
+    if (!isMobile) {
+      speechSynthesis.resume();
+      setPlayerState("playing");
+      setupMediaSession();
+      return;
+    }
+
+    // Mobile: SpeechSynthesis.resume() é não confiável — recria a utterance
+    speechSynthesis.cancel();
+    const block = blocksRef.current[blockIndexRef.current];
+    if (!block) return;
+
+    const u = new SpeechSynthesisUtterance(block);
+    const s = getVoiceSettings();
+    if (isPremium && selectedVoiceURI) {
+      const chosen = voices.find(v => v.voiceURI === selectedVoiceURI);
+      if (chosen) u.voice = chosen;
+    }
+    u.rate = accessibilityMode ? 0.7 : s.rate;
+    u.pitch = accessibilityMode ? 0.9 : s.pitch;
+    u.volume = s.volume;
+    utteranceRef.current = u;
+
+    u.onstart = () => {
+      setPlayerState("playing");
+      setCurrentSpeakingIndex(blockIndexRef.current);
+      setupMediaSession();
+    };
+
+    u.onend = () => {
+      blockIndexRef.current += 1;
+      if (blockIndexRef.current < blocksRef.current.length) {
+        speakBlock(index);
+      } else if (continuous && activeIndexRef.current < texts.length - 1) {
+        playFromStart(activeIndexRef.current + 1);
+      } else {
+        stopPlayback();
+      }
+    };
+
+    speechSynthesis.speak(u);
+  }
+
+  function stopPlayback() {
+    speechSynthesis.cancel();
+    releaseWakeLock();
+    if (noSleepRef.current) noSleepRef.current.disable();
+
+    // Para o áudio silencioso só ao parar de vez
+    if (silenceAudioRef.current) {
+      silenceAudioRef.current.pause();
+      silenceAudioRef.current.currentTime = 0;
+    }
+
+    clearMediaSession();
+    activeIndexRef.current = null;
+    setPlayerState("idle");
+    setActiveCardIndex(null);
+    setCurrentSpeakingIndex(0);
+  }
+
   // ================= HELPERS =================
   const hasDailyLimit = limits.daily !== null;
 
@@ -856,4 +919,3 @@ function stopPlayback() {
     </div>
   );
 }
-
