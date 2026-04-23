@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Heitor Reader</string>
+    <string name="title_activity_main">Heitor Reader</string>
+    <string name="package_name">com.heitor.reader</string>
+    <string name="custom_url_scheme">com.heitor.reader</string>
+</resources>

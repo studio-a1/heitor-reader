@@ -1,4 +1,3 @@
-import NoSleep from 'nosleep.js';
 import { supabase } from "./lib/supabase";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -17,6 +16,21 @@ import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.js?url";
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 import Paywall from "./components/Paywall";
 
+// ================= CAPACITOR TTS =================
+let NativeTTS = null;
+let isNative = false;
+
+try {
+  const { TextToSpeech } = await import("@capacitor-community/text-to-speech");
+  const { Capacitor } = await import("@capacitor/core");
+  if (Capacitor.isNativePlatform()) {
+    NativeTTS = TextToSpeech;
+    isNative = true;
+  }
+} catch {
+  isNative = false;
+}
+
 /* ================= CONFIG ================= */
 const DEFAULT_PLAN = "free";
 const PLAN_LIMITS = {
@@ -25,6 +39,7 @@ const PLAN_LIMITS = {
   premium: { daily: null, monthly: 1500 },
 };
 const isMobile = typeof navigator !== "undefined" && /Android|iPhone|iPad/i.test(navigator.userAgent);
+const isAndroid = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
 
 export default function App() {
   // ================= STATES =================
@@ -57,8 +72,6 @@ export default function App() {
   const canUseAccessibility = plan === "freemium" || plan === "premium";
 
   /* ================= REFS ================= */
-  const noSleepRef = useRef(null);
-  const silenceAudioRef = useRef(null);         // ← NOVO: áudio silencioso para keep-alive
   const utteranceRef = useRef(null);
   const blocksRef = useRef([]);
   const blockIndexRef = useRef(0);
@@ -72,6 +85,7 @@ export default function App() {
   const imageInputRef = useRef(null);
   const pdfInputRef = useRef(null);
   const wasPlayingBeforeBackgroundRef = useRef(false);
+  const isSpeakingRef = useRef(false);
 
   // ================= PERSISTÊNCIA =================
   useEffect(() => {
@@ -103,43 +117,29 @@ export default function App() {
 
   // ================= VOZES =================
   const loadVoices = () => {
+    if (isNative) return;
     const available = speechSynthesis.getVoices().filter(v => v.lang.startsWith("pt"));
     setVoices(available);
     if (!selectedVoiceURI && available.length > 0) {
       const defaultVoice = available.find(v =>
-        v.name.toLowerCase().includes("female") || v.name.toLowerCase().includes("maria") || v.name.toLowerCase().includes("brasil")
+        v.name.toLowerCase().includes("female") ||
+        v.name.toLowerCase().includes("maria") ||
+        v.name.toLowerCase().includes("brasil")
       ) || available[0];
       setSelectedVoiceURI(defaultVoice.voiceURI);
     }
   };
 
   useEffect(() => {
-    speechSynthesis.onvoiceschanged = loadVoices;
-    loadVoices();
+    if (!isNative) {
+      speechSynthesis.onvoiceschanged = loadVoices;
+      loadVoices();
+    }
   }, []);
 
   useEffect(() => {
-    if (showVoiceSettings) setTimeout(loadVoices, 300);
+    if (showVoiceSettings && !isNative) setTimeout(loadVoices, 300);
   }, [showVoiceSettings]);
-
-  // ================= NO SLEEP + SILENCE AUDIO =================
-  useEffect(() => {
-    // NoSleep.js — evita tela apagar
-    noSleepRef.current = new NoSleep();
-
-    // Áudio silencioso em loop — mantém o contexto de mídia vivo no background
-    // volume 0.001: quase zero mas não zero (zero seria ignorado pelo browser)
-    const audio = new Audio("/silence.mp3");
-    audio.loop = true;
-    audio.volume = 0.001;
-    silenceAudioRef.current = audio;
-
-    return () => {
-      if (noSleepRef.current) noSleepRef.current.disable();
-      audio.pause();
-      audio.src = "";
-    };
-  }, []);
 
   // ================= WAKE LOCK =================
   const requestWakeLock = async () => {
@@ -180,12 +180,7 @@ export default function App() {
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
         requestWakeLock();
-        if (noSleepRef.current) noSleepRef.current.enable();
-        // Retoma o silence se estava tocando
-        if (silenceAudioRef.current && wasPlayingBeforeBackgroundRef.current) {
-          silenceAudioRef.current.play().catch(() => {});
-        }
-        if (wasPlayingBeforeBackgroundRef.current && activeIndexRef.current !== null) {
+        if (!isNative && wasPlayingBeforeBackgroundRef.current && activeIndexRef.current !== null) {
           resumePlayback(activeIndexRef.current);
           wasPlayingBeforeBackgroundRef.current = false;
         }
@@ -197,13 +192,13 @@ export default function App() {
     };
 
     const handleFocus = () => {
-      if (playerState === "playing" && activeIndexRef.current !== null) {
+      if (!isNative && playerState === "playing" && activeIndexRef.current !== null) {
         resumePlayback(activeIndexRef.current);
       }
     };
 
     const handlePageShow = (e) => {
-      if (e.persisted && playerState === "playing" && activeIndexRef.current !== null) {
+      if (!isNative && e.persisted && playerState === "playing" && activeIndexRef.current !== null) {
         resumePlayback(activeIndexRef.current);
       }
     };
@@ -374,7 +369,40 @@ export default function App() {
     return blocks.filter(b => b.length > 3);
   }
 
-  // ================= VOICE & PLAYER =================
+  // ================= PLAYER NATIVO (Capacitor) =================
+  async function speakBlockNative(cardIndex) {
+    if (!isSpeakingRef.current) return;
+    const block = blocksRef.current[blockIndexRef.current];
+    if (!block) return;
+
+    setCurrentSpeakingIndex(blockIndexRef.current);
+    setupMediaSession();
+
+    try {
+      await NativeTTS.speak({
+        text: block,
+        lang: "pt-BR",
+        rate: accessibilityMode ? 0.7 : (isPremium ? customRate : 1.0),
+        pitch: accessibilityMode ? 0.9 : (isPremium ? customPitch : 1.0),
+        volume: 1.0,
+        category: "ambient",
+      });
+
+      if (!isSpeakingRef.current) return;
+      blockIndexRef.current += 1;
+      if (blockIndexRef.current < blocksRef.current.length) {
+        await speakBlockNative(cardIndex);
+      } else if (continuous && activeIndexRef.current < texts.length - 1) {
+        await playFromStart(activeIndexRef.current + 1);
+      } else {
+        stopPlayback();
+      }
+    } catch {
+      if (isSpeakingRef.current) stopPlayback();
+    }
+  }
+
+  // ================= PLAYER WEB (fallback browser) =================
   function warmUpVoice() {
     if (warmedUpRef.current) return;
     const u = new SpeechSynthesisUtterance(" ");
@@ -400,7 +428,6 @@ export default function App() {
     u.rate = accessibilityMode ? 0.7 : s.rate;
     u.pitch = accessibilityMode ? 0.9 : s.pitch;
     u.volume = s.volume;
-
     utteranceRef.current = u;
 
     u.onstart = () => {
@@ -423,43 +450,53 @@ export default function App() {
     speechSynthesis.speak(u);
   }
 
-  function playFromStart(index) {
-    speechSynthesis.cancel();
-    requestWakeLock();
-    warmUpVoice();
-    if (noSleepRef.current) noSleepRef.current.enable();
-
-    // Inicia o áudio silencioso — mantém contexto de mídia vivo no background
-    if (silenceAudioRef.current) {
-      silenceAudioRef.current.play().catch(() => {});
+  // ================= PLAY / PAUSE / STOP =================
+  async function playFromStart(index) {
+    if (isNative) {
+      await NativeTTS.stop();
+    } else {
+      speechSynthesis.cancel();
+      warmUpVoice();
     }
 
+    requestWakeLock();
+    isSpeakingRef.current = true;
     activeIndexRef.current = index;
     setActiveCardIndex(index);
+    setPlayerState("playing");
+
     const clean = sanitizeText(texts[index].text);
     blocksRef.current = splitIntoBlocks(clean);
     blockIndexRef.current = 0;
-    speakBlock(index);
+
+    if (isNative) {
+      speakBlockNative(index);
+    } else {
+      speakBlock(index);
+    }
   }
 
-  function pausePlayback(index) {
+  async function pausePlayback(index) {
     if (activeCardIndex !== index) return;
-    speechSynthesis.pause();
+    if (isNative) {
+      isSpeakingRef.current = false;
+      await NativeTTS.stop();
+    } else {
+      speechSynthesis.pause();
+    }
     setPlayerState("paused");
-    if (noSleepRef.current) noSleepRef.current.disable();
-    // Mantém o silence rodando mesmo pausado — facilita o resume
     setStatusMessage("Leitura pausada");
   }
 
-  function resumePlayback(index) {
+  async function resumePlayback(index) {
     if (activeCardIndex !== index && activeIndexRef.current !== index) return;
-
-    if (noSleepRef.current) noSleepRef.current.enable();
     requestWakeLock();
 
-    // Reativa o silence ao retomar
-    if (silenceAudioRef.current) {
-      silenceAudioRef.current.play().catch(() => {});
+    if (isNative) {
+      isSpeakingRef.current = true;
+      setPlayerState("playing");
+      speakBlockNative(index);
+      return;
     }
 
     if (!isMobile) {
@@ -469,7 +506,6 @@ export default function App() {
       return;
     }
 
-    // Mobile: SpeechSynthesis.resume() é não confiável — recria a utterance
     speechSynthesis.cancel();
     const block = blocksRef.current[blockIndexRef.current];
     if (!block) return;
@@ -505,17 +541,14 @@ export default function App() {
     speechSynthesis.speak(u);
   }
 
-  function stopPlayback() {
-    speechSynthesis.cancel();
-    releaseWakeLock();
-    if (noSleepRef.current) noSleepRef.current.disable();
-
-    // Para o áudio silencioso só ao parar de vez
-    if (silenceAudioRef.current) {
-      silenceAudioRef.current.pause();
-      silenceAudioRef.current.currentTime = 0;
+  async function stopPlayback() {
+    isSpeakingRef.current = false;
+    if (isNative) {
+      await NativeTTS.stop();
+    } else {
+      speechSynthesis.cancel();
     }
-
+    releaseWakeLock();
     clearMediaSession();
     activeIndexRef.current = null;
     setPlayerState("idle");
@@ -537,47 +570,35 @@ export default function App() {
           await supabase.from("users").update({ plan: "freemium" }).eq("id", user.id);
         }
         setPlan("freemium");
-        setStatusMessage("✅ Freemium ativado! (modo teste) - Limites ampliados. Pode continuar escaneando.");
+        setStatusMessage("✅ Freemium ativado! Limites ampliados.");
       }
     }
   };
 
   // ================= OPEN PICKER =================
   const openScanner = () => {
-    if (!user) {
-      setStatusMessage("Faça login para escanear documentos.");
-      return;
-    }
+    if (!user) { setStatusMessage("Faça login para escanear documentos."); return; }
     if (hasDailyLimit && usage.daily >= limits.daily) {
-      setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
-      setShowPaywall(true);
-      return;
+      setStatusMessage("❌ Você atingiu o limite diário de scans!");
+      setShowPaywall(true); return;
     }
     cameraInputRef.current?.click();
   };
 
   const openImage = () => {
-    if (!user) {
-      setStatusMessage("Faça login para escanear documentos.");
-      return;
-    }
+    if (!user) { setStatusMessage("Faça login para escanear documentos."); return; }
     if (hasDailyLimit && usage.daily >= limits.daily) {
-      setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
-      setShowPaywall(true);
-      return;
+      setStatusMessage("❌ Você atingiu o limite diário de scans!");
+      setShowPaywall(true); return;
     }
     imageInputRef.current?.click();
   };
 
   const openPdf = () => {
-    if (!user) {
-      setStatusMessage("Faça login para escanear documentos.");
-      return;
-    }
+    if (!user) { setStatusMessage("Faça login para escanear documentos."); return; }
     if (hasDailyLimit && usage.daily >= limits.daily) {
-      setStatusMessage("❌ Você atingiu o limite diário de scans! Faça upgrade ou aguarde amanhã.");
-      setShowPaywall(true);
-      return;
+      setStatusMessage("❌ Você atingiu o limite diário de scans!");
+      setShowPaywall(true); return;
     }
     pdfInputRef.current?.click();
   };
@@ -621,12 +642,11 @@ export default function App() {
       if (data.text) {
         const clean = sanitizeText(data.text);
         if (clean.length > 10) {
-          const newEntry = {
+          setTexts(prev => [...prev, {
             id: `scan-${Date.now()}`,
             text: clean,
             timestamp: new Date().toISOString(),
-          };
-          setTexts(prev => [...prev, newEntry]);
+          }]);
         }
       }
       setStatusMessage("Escaneamento concluído!");
@@ -645,10 +665,7 @@ export default function App() {
     processingRef.current = true;
     abortProcessingRef.current = false;
     const file = e.target?.files?.[0];
-    if (!file) {
-      processingRef.current = false;
-      return;
-    }
+    if (!file) { processingRef.current = false; return; }
     try {
       setLoading(true);
       const { data: { session } } = await supabase.auth.getSession();
@@ -656,12 +673,11 @@ export default function App() {
       const buffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
       const maxPages = pdf.numPages;
-      const hasDailyLimitLocal = limits.daily !== null;
 
-      if (hasDailyLimitLocal) {
+      if (limits.daily !== null) {
         const remaining = limits.daily - (usage.daily || 0);
         if (maxPages > remaining) {
-          setStatusMessage(`⚠️ Este PDF tem ${maxPages} páginas e você só pode escanear ${remaining} hoje.`);
+          setStatusMessage(`⚠️ PDF com ${maxPages} páginas, mas você só pode escanear ${remaining} hoje.`);
           if (window.confirm("Deseja fazer upgrade?")) setShowPaywall(true);
           processingRef.current = false;
           setLoading(false);
@@ -680,8 +696,7 @@ export default function App() {
         const canvas = document.createElement("canvas");
         canvas.width = viewport.width;
         canvas.height = viewport.height;
-        const ctx = canvas.getContext("2d");
-        await page.render({ canvasContext: ctx, viewport }).promise;
+        await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
         const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
         const formData = new FormData();
         formData.append("file", blob, `page-${i}.png`);
@@ -691,7 +706,7 @@ export default function App() {
           body: formData,
         });
         if (res.status === 403) {
-          setStatusMessage("❌ Limite atingido! Aguarde reset ou faça upgrade.");
+          setStatusMessage("❌ Limite atingido!");
           setShowPaywall(true);
           break;
         }
@@ -715,9 +730,7 @@ export default function App() {
         }
       }
 
-      if (newEntries.length > 0) {
-        setTexts(prev => [...prev, ...newEntries]);
-      }
+      if (newEntries.length > 0) setTexts(prev => [...prev, ...newEntries]);
       setStatusMessage("PDF processado com sucesso!");
     } catch (err) {
       console.error("PDF ERROR:", err);
@@ -745,7 +758,9 @@ export default function App() {
       <div className={`max-w-6xl mx-auto rounded-2xl p-6 space-y-6 ${isPremium ? "bg-neutral-500 text-neutral-950 shadow-xl" : isFreemium ? "bg-neutral-800 text-neutral-100" : "bg-neutral-800 text-neutral-200"}`}>
         <header className="text-center">
           <h1 className="text-2xl font-semibold">Heitor Reader</h1>
-          <p className="text-sm opacity-70">Leitura assistida</p>
+          <p className="text-sm opacity-70">
+            Leitura assistida{isNative ? " 🟢 App nativo" : " 🌐 Browser"}
+          </p>
           {canUseAccessibility && (
             <button onClick={() => setAccessibilityMode(v => !v)} className={`mt-3 inline-flex items-center gap-2 px-4 py-1 rounded-full text-xs border ${accessibilityMode ? "bg-amber-700 border-amber-400 text-white" : "bg-neutral-700 border-neutral-600 text-neutral-300"}`}>
               👵 Modo 60+
@@ -765,13 +780,19 @@ export default function App() {
 
         {isPremium && showVoiceSettings && (
           <div className="bg-neutral-900 p-4 rounded-xl text-sm mt-4">
-            <label className="block mb-2">Voz em Português:</label>
-            {voices.length > 0 ? (
-              <select value={selectedVoiceURI || ""} onChange={e => setSelectedVoiceURI(e.target.value)} className="w-full bg-neutral-800 p-3 rounded text-neutral-200 border border-neutral-700">
-                {voices.map(v => <option key={v.voiceURI} value={v.voiceURI}>{v.name} {v.lang}</option>)}
-              </select>
+            {isNative ? (
+              <p className="text-green-400 text-xs mb-3">✅ Usando voz nativa do sistema (pt-BR)</p>
             ) : (
-              <p className="text-amber-400 text-xs">Carregando vozes... (toque novamente se não aparecer)</p>
+              <>
+                <label className="block mb-2">Voz em Português:</label>
+                {voices.length > 0 ? (
+                  <select value={selectedVoiceURI || ""} onChange={e => setSelectedVoiceURI(e.target.value)} className="w-full bg-neutral-800 p-3 rounded text-neutral-200 border border-neutral-700">
+                    {voices.map(v => <option key={v.voiceURI} value={v.voiceURI}>{v.name} {v.lang}</option>)}
+                  </select>
+                ) : (
+                  <p className="text-amber-400 text-xs">Carregando vozes... (toque novamente se não aparecer)</p>
+                )}
+              </>
             )}
             <label className="block mt-4 mb-1">Velocidade: {customRate.toFixed(1)}x</label>
             <input type="range" min="0.5" max="2" step="0.1" value={customRate} onChange={e => setCustomRate(parseFloat(e.target.value))} className="w-full" />
@@ -821,7 +842,9 @@ export default function App() {
               <div
                 key={entry.id}
                 className={`min-w-[280px] p-5 rounded-xl border-2 transition-all ${
-                  isPremium ? "bg-white text-neutral-900 border-amber-300" : isFreemium ? "bg-neutral-800 text-neutral-100 border-cyan-500/40" : "bg-neutral-900 text-neutral-200 border-neutral-700"
+                  isPremium ? "bg-white text-neutral-900 border-amber-300"
+                  : isFreemium ? "bg-neutral-800 text-neutral-100 border-cyan-500/40"
+                  : "bg-neutral-900 text-neutral-200 border-neutral-700"
                 } ${isActive ? "border-4 border-green-400 shadow-2xl" : ""} ${
                   isAccessibleActive ? "bg-neutral-950 text-amber-100 border-amber-400" : ""
                 }`}
@@ -835,7 +858,18 @@ export default function App() {
                     ) : (
                       <PlayIcon className="h-5 w-5 cursor-pointer text-yellow-400 hover:scale-110" onClick={() => resumePlayback(i)} />
                     )}
-                    <ArrowUturnLeftIcon className={`h-5 w-5 cursor-pointer text-blue-400 hover:scale-110 ${rewindFlash ? "opacity-100" : "opacity-70"}`} onClick={() => rewind(i)} />
+                    <ArrowUturnLeftIcon
+                      className={`h-5 w-5 cursor-pointer text-blue-400 hover:scale-110 ${rewindFlash ? "opacity-100" : "opacity-70"}`}
+                      onClick={() => {
+                        blockIndexRef.current = Math.max(0, blockIndexRef.current - 1);
+                        setRewindFlash(true);
+                        setTimeout(() => setRewindFlash(false), 300);
+                        if (playerState === "playing") {
+                          if (isNative) { NativeTTS.stop().then(() => { isSpeakingRef.current = true; speakBlockNative(i); }); }
+                          else { speechSynthesis.cancel(); speakBlock(i); }
+                        }
+                      }}
+                    />
                     <StopIcon className="h-5 w-5 cursor-pointer text-red-400 hover:scale-110" onClick={stopPlayback} />
                     <ArchiveBoxIcon className="h-5 w-5 cursor-pointer text-blue-400 hover:text-blue-500" onClick={() => moveToHistory(entry.id)} />
                   </div>
@@ -901,13 +935,47 @@ export default function App() {
         )}
       </div>
 
-      <footer className="text-center text-xs mt-6 space-y-2">
-        <span className={isPremium ? "text-amber-600 font-semibold" : isFreemium ? "text-cyan-400" : "text-neutral-400"}>Plano: {safePlan}</span>
+      {/* ================= BANNER DOWNLOAD APK ================= */}
+      {/* Só aparece no browser mobile Android, some quando já está no app nativo */}
+      {isAndroid && !isNative && (
+        <div className="max-w-6xl mx-auto mt-4 rounded-2xl bg-gradient-to-r from-green-900 to-green-800 border border-green-600 p-4 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-green-100 text-sm font-medium">📲 Quer ouvir com a tela bloqueada?</p>
+            <p className="text-green-400 text-xs mt-0.5">Instale o app Android para narração em background</p>
+          </div>
+          <a
+            href="/heitor-reader.apk"
+            download
+            className="shrink-0 bg-green-500 hover:bg-green-400 active:bg-green-600 text-white text-xs font-semibold px-4 py-2 rounded-xl transition"
+          >
+            Baixar APK
+          </a>
+        </div>
+      )}
+
+      <footer className="text-center text-xs mt-6 space-y-2 pb-6">
+        <span className={isPremium ? "text-amber-600 font-semibold" : isFreemium ? "text-cyan-400" : "text-neutral-400"}>
+          Plano: {safePlan}
+        </span>
         <div>Uso hoje: {usage.daily}</div>
         <div className="w-full bg-neutral-800 rounded-full h-2 mt-1">
           <div className="bg-green-500 h-2 rounded-full" style={{ width: `${monthlyPercent}%` }} />
         </div>
         <div>{usage.monthly} / {limits.monthly} este mês</div>
+
+        {/* Link de download para quem acessa pelo desktop ou iOS */}
+        {!isNative && !isAndroid && (
+          <div className="mt-4 pt-4 border-t border-neutral-700">
+            <p className="text-neutral-500 text-xs mb-2">Usuário Android? Instale o app para narração em background</p>
+            <a
+              href="/heitor-reader.apk"
+              download
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-neutral-700 hover:bg-neutral-600 text-neutral-200 text-xs transition"
+            >
+              📲 Baixar app Android (.apk)
+            </a>
+          </div>
+        )}
       </footer>
 
       {showPaywall && (
