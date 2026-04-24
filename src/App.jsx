@@ -63,6 +63,10 @@ export default function App() {
   const [customRate, setCustomRate] = useState(1);
   const [customPitch, setCustomPitch] = useState(1);
   const [currentSpeakingIndex, setCurrentSpeakingIndex] = useState(0);
+  // ↓ controla se o banner de download deve ser exibido
+  const [apkDownloaded, setApkDownloaded] = useState(
+    () => localStorage.getItem("apk-downloaded") === "true"
+  );
 
   const safePlan = plan || "free";
   const isPremium = safePlan === "premium";
@@ -70,6 +74,16 @@ export default function App() {
   const limits = PLAN_LIMITS[safePlan] || PLAN_LIMITS.free;
   const monthlyPercent = Math.min(((usage?.monthly || 0) / limits.monthly) * 100, 100);
   const canUseAccessibility = plan === "freemium" || plan === "premium";
+
+  // Banner só aparece se: Android + browser (não APK) + ainda não baixou
+  const showApkBanner = isAndroid && !isNative && !apkDownloaded;
+  // Link discreto no footer para desktop/iOS que ainda não baixou
+  const showApkFooter = !isNative && !isAndroid && !apkDownloaded;
+
+  const handleApkDownload = () => {
+    localStorage.setItem("apk-downloaded", "true");
+    setApkDownloaded(true);
+  };
 
   /* ================= REFS ================= */
   const utteranceRef = useRef(null);
@@ -267,11 +281,13 @@ export default function App() {
 
   // ================= AUTH =================
   const loginWithGoogle = async () => {
-    await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: window.location.origin },
-    });
-  };
+  await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo: "https://heitor-on.netlify.app",
+    },
+  });
+};
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -935,9 +951,8 @@ export default function App() {
         )}
       </div>
 
-      {/* ================= BANNER DOWNLOAD APK ================= */}
-      {/* Só aparece no browser mobile Android, some quando já está no app nativo */}
-      {isAndroid && !isNative && (
+      {/* ===== BANNER ANDROID — só aparece no browser, some após baixar e nunca no APK ===== */}
+      {showApkBanner && (
         <div className="max-w-6xl mx-auto mt-4 rounded-2xl bg-gradient-to-r from-green-900 to-green-800 border border-green-600 p-4 flex items-center justify-between gap-4">
           <div>
             <p className="text-green-100 text-sm font-medium">📲 Quer ouvir com a tela bloqueada?</p>
@@ -946,6 +961,7 @@ export default function App() {
           <a
             href="/heitor-reader.apk"
             download
+            onClick={handleApkDownload}
             className="shrink-0 bg-green-500 hover:bg-green-400 active:bg-green-600 text-white text-xs font-semibold px-4 py-2 rounded-xl transition"
           >
             Baixar APK
@@ -963,13 +979,14 @@ export default function App() {
         </div>
         <div>{usage.monthly} / {limits.monthly} este mês</div>
 
-        {/* Link de download para quem acessa pelo desktop ou iOS */}
-        {!isNative && !isAndroid && (
+        {/* Link discreto para desktop/iOS — some após baixar e nunca no APK */}
+        {showApkFooter && (
           <div className="mt-4 pt-4 border-t border-neutral-700">
             <p className="text-neutral-500 text-xs mb-2">Usuário Android? Instale o app para narração em background</p>
             <a
               href="/heitor-reader.apk"
               download
+              onClick={handleApkDownload}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-neutral-700 hover:bg-neutral-600 text-neutral-200 text-xs transition"
             >
               📲 Baixar app Android (.apk)

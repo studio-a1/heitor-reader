@@ -11,6 +11,10 @@
   "workspace": {
     "packageJson": {
       "dependencies": [
+        "npm:@capacitor-community/text-to-speech@8",
+        "npm:@capacitor/android@^8.3.1",
+        "npm:@capacitor/cli@^8.3.1",
+        "npm:@capacitor/core@^8.3.1",
         "npm:@eslint/js@^9.39.1",
         "npm:@heroicons/react@^2.2.0",
         "npm:@supabase/supabase-js@^2.97.0",
