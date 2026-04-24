@@ -281,14 +281,39 @@ export default function App() {
 
   // ================= AUTH =================
   const loginWithGoogle = async () => {
-  await supabase.auth.signInWithOAuth({
-    provider: "google",
-    options: {
-      redirectTo: "https://heitor-on.netlify.app",
-    },
-  });
-};
+  if (isNative) {
+    // No APK: usa o browser nativo do Capacitor para OAuth
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: "https://heitor-on.netlify.app",
+        skipBrowserRedirect: true, // não redireciona automaticamente
+      },
+    });
+    if (error || !data?.url) return;
 
+    // Abre o browser nativo do Capacitor
+    const { Browser } = await import("@capacitor/browser");
+    await Browser.open({ url: data.url });
+
+    // Escuta quando o browser fechar e tenta recuperar a sessão
+    Browser.addListener("browserFinished", async () => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (sessionData?.session) {
+        // sessão recuperada — o onAuthStateChange vai disparar automaticamente
+        Browser.removeAllListeners();
+      }
+    });
+  } else {
+    // No browser normal: fluxo padrão
+    await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: "https://heitor-on.netlify.app",
+      },
+    });
+  }
+};
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setStatusMessage("✅ Conta desconectada com sucesso!");

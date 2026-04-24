@@ -7,6 +7,11 @@ const config: CapacitorConfig = {
   server: {
     url: 'https://heitor-on.netlify.app',
     cleartext: false
+  },
+  plugins: {
+    Browser: {
+      presentationStyle: "popover"
+    }
   }
 };
 
