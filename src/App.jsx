@@ -16,7 +16,7 @@ import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.js?url";
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 import Paywall from "./components/Paywall";
 
-// ================= CAPACITOR TTS =================
+// ================= CAPACITOR =================
 let NativeTTS = null;
 let isNative = false;
 
@@ -63,7 +63,6 @@ export default function App() {
   const [customRate, setCustomRate] = useState(1);
   const [customPitch, setCustomPitch] = useState(1);
   const [currentSpeakingIndex, setCurrentSpeakingIndex] = useState(0);
-  // ↓ controla se o banner de download deve ser exibido
   const [apkDownloaded, setApkDownloaded] = useState(
     () => localStorage.getItem("apk-downloaded") === "true"
   );
@@ -281,39 +280,54 @@ export default function App() {
 
   // ================= AUTH =================
   const loginWithGoogle = async () => {
-  if (isNative) {
-    // No APK: usa o browser nativo do Capacitor para OAuth
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: "https://heitor-on.netlify.app",
-        skipBrowserRedirect: true, // não redireciona automaticamente
-      },
-    });
-    if (error || !data?.url) return;
+    if (isNative) {
+      // APK: usa browser nativo do Capacitor para OAuth
+      try {
+        const { data, error } = await supabase.auth.signInWithOAuth({
+          provider: "google",
+          options: {
+            redirectTo: "https://heitor-on.netlify.app",
+            skipBrowserRedirect: true,
+          },
+        });
 
-    // Abre o browser nativo do Capacitor
-    const { Browser } = await import("@capacitor/browser");
-    await Browser.open({ url: data.url });
+        if (error || !data?.url) {
+          setStatusMessage("❌ Erro ao iniciar login.");
+          return;
+        }
 
-    // Escuta quando o browser fechar e tenta recuperar a sessão
-    Browser.addListener("browserFinished", async () => {
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (sessionData?.session) {
-        // sessão recuperada — o onAuthStateChange vai disparar automaticamente
-        Browser.removeAllListeners();
+        const { Browser } = await import("@capacitor/browser");
+
+        // Quando o browser fechar, tenta recuperar a sessão
+        await Browser.addListener("browserFinished", async () => {
+          await Browser.removeAllListeners();
+          const { data: sessionData } = await supabase.auth.getSession();
+          if (!sessionData?.session) {
+            // Tenta refresh caso o token já esteja no storage
+            await supabase.auth.refreshSession();
+          }
+        });
+
+        await Browser.open({
+          url: data.url,
+          presentationStyle: "popover",
+        });
+
+      } catch (err) {
+        console.error("LOGIN NATIVE ERROR:", err);
+        setStatusMessage("❌ Erro ao fazer login.");
       }
-    });
-  } else {
-    // No browser normal: fluxo padrão
-    await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: "https://heitor-on.netlify.app",
-      },
-    });
-  }
-};
+    } else {
+      // Browser normal: fluxo padrão
+      await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: "https://heitor-on.netlify.app",
+        },
+      });
+    }
+  };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setStatusMessage("✅ Conta desconectada com sucesso!");
@@ -357,7 +371,11 @@ export default function App() {
       }
     });
 
-    supabase.auth.getSession().then(({ data }) => data.session && loadUserData(data.session));
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session) loadUserData(data.session);
+      else setAuthChecked(true);
+    });
+
     return () => subscription.unsubscribe();
   }, []);
 
@@ -976,7 +994,7 @@ export default function App() {
         )}
       </div>
 
-      {/* ===== BANNER ANDROID — só aparece no browser, some após baixar e nunca no APK ===== */}
+      {/* ===== BANNER ANDROID — só no browser, some após baixar, nunca no APK ===== */}
       {showApkBanner && (
         <div className="max-w-6xl mx-auto mt-4 rounded-2xl bg-gradient-to-r from-green-900 to-green-800 border border-green-600 p-4 flex items-center justify-between gap-4">
           <div>
@@ -1004,7 +1022,7 @@ export default function App() {
         </div>
         <div>{usage.monthly} / {limits.monthly} este mês</div>
 
-        {/* Link discreto para desktop/iOS — some após baixar e nunca no APK */}
+        {/* Link discreto para desktop/iOS — some após baixar, nunca no APK */}
         {showApkFooter && (
           <div className="mt-4 pt-4 border-t border-neutral-700">
             <p className="text-neutral-500 text-xs mb-2">Usuário Android? Instale o app para narração em background</p>
