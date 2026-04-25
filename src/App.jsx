@@ -282,8 +282,6 @@ export default function App() {
   const loginWithGoogle = async () => {
   if (isNative) {
     try {
-      const { Browser } = await import("@capacitor/browser");
-      
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
@@ -295,14 +293,8 @@ export default function App() {
       if (error) throw error;
       if (!data?.url) throw new Error("URL não gerada");
 
-      // v8 usa open() direto
-      await Browser.open({ url: data.url });
-
-      // Escuta o retorno
-      const listener = await Browser.addListener("browserFinished", async () => {
-        await listener.remove();
-        await supabase.auth.getSession();
-      });
+      // Abre no browser externo do Android diretamente
+      window.open(data.url, "_system");
 
     } catch (err) {
       console.error("LOGIN ERROR:", err);
