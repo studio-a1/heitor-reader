@@ -280,53 +280,43 @@ export default function App() {
 
   // ================= AUTH =================
   const loginWithGoogle = async () => {
-    if (isNative) {
-      // APK: usa browser nativo do Capacitor para OAuth
-      try {
-        const { data, error } = await supabase.auth.signInWithOAuth({
-          provider: "google",
-          options: {
-            redirectTo: "https://heitor-on.netlify.app",
-            skipBrowserRedirect: true,
-          },
-        });
-
-        if (error || !data?.url) {
-          setStatusMessage("❌ Erro ao iniciar login.");
-          return;
-        }
-
-        const { Browser } = await import("@capacitor/browser");
-
-        // Quando o browser fechar, tenta recuperar a sessão
-        await Browser.addListener("browserFinished", async () => {
-          await Browser.removeAllListeners();
-          const { data: sessionData } = await supabase.auth.getSession();
-          if (!sessionData?.session) {
-            // Tenta refresh caso o token já esteja no storage
-            await supabase.auth.refreshSession();
-          }
-        });
-
-        await Browser.open({
-          url: data.url,
-          presentationStyle: "popover",
-        });
-
-      } catch (err) {
-        console.error("LOGIN NATIVE ERROR:", err);
-        setStatusMessage("❌ Erro ao fazer login.");
-      }
-    } else {
-      // Browser normal: fluxo padrão
-      await supabase.auth.signInWithOAuth({
+  if (isNative) {
+    try {
+      const { Browser } = await import("@capacitor/browser");
+      
+      const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
           redirectTo: "https://heitor-on.netlify.app",
+          skipBrowserRedirect: true,
         },
       });
+
+      if (error) throw error;
+      if (!data?.url) throw new Error("URL não gerada");
+
+      // v8 usa open() direto
+      await Browser.open({ url: data.url });
+
+      // Escuta o retorno
+      const listener = await Browser.addListener("browserFinished", async () => {
+        await listener.remove();
+        await supabase.auth.getSession();
+      });
+
+    } catch (err) {
+      console.error("LOGIN ERROR:", err);
+      setStatusMessage(`❌ Erro: ${err.message}`);
     }
-  };
+  } else {
+    await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: "https://heitor-on.netlify.app",
+      },
+    });
+  }
+};
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
