@@ -1,0 +1,8 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.heitor.reader",
+    "sha256_cert_fingerprints": ["52:A6:AF:56:B1:BB:C0:22:10:D0:71:9B:14:EA:DE:D3:C2:99:1B:8E:C3:D6:E0:C8:93:50:52:CF:54:BA:30:03"]
+  }
+}]

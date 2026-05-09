@@ -13,6 +13,8 @@
       "dependencies": [
         "npm:@capacitor-community/text-to-speech@8",
         "npm:@capacitor/android@^8.3.1",
+        "npm:@capacitor/app@^8.1.0",
+        "npm:@capacitor/browser@^8.0.3",
         "npm:@capacitor/cli@^8.3.1",
         "npm:@capacitor/core@^8.3.1",
         "npm:@eslint/js@^9.39.1",
