@@ -3,6 +3,6 @@
   "target": {
     "namespace": "android_app",
     "package_name": "com.heitor.reader",
-    "sha256_cert_fingerprints": ["52:A6:AF:56:B1:BB:C0:22:10:D0:71:9B:14:EA:DE:D3:C2:99:1B:8E:C3:D6:E0:C8:93:50:52:CF:54:BA:30:03"]
+    "sha256_cert_fingerprints": ["03:39:F4:39:B8:52:8B:6B:A9:85:CB:4C:E3:18:23:8A:6B:62:56:8D:FC:37:01:E7:0C:88:9A:D6:12:E9:70:15"]
   }
 }]
