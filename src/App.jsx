@@ -285,7 +285,7 @@ export default function App() {
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: "https://heitor-on.netlify.app",
+          redirectTo: "https://heitor-on.netlify.app/auth-callback.html",
           skipBrowserRedirect: true,
         },
       });
@@ -304,7 +304,7 @@ export default function App() {
     await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: "https://heitor-on.netlify.app",
+        redirectTo: "https://heitor-on.netlify.app/",
       },
     });
   }
